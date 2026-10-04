@@ -182,6 +182,15 @@ CLICKS=3 node tools/spellshot.mjs "http://127.0.0.1:5173/?seed=5&play=1&speed=3"
   Attack, extra damage of another type (Hobgoblin poison). Saving throws: d20(s) then Bless d4. Area spells roll every
   save first (creatures in add order), then the damage once. Advantage consumes two d20s (Vex, Steady Aim, and
   initiative for the level 3 Champion and Assassin; tests mostly use `torvald(2)` / `nyx(2)` to avoid that).
+- **No fast light flicker:** the banded-luminance post pass turns small brightness changes into band edges crawling
+  across the whole floor (the owner read it as "screen shake"). Torches breathe slowly; keep it that way.
+- **Camera:** don't call `lookAt` for routine events; use `ensureVisible(x, y)`, which only pans when the square would
+  leave the middle of the view. The owner dislikes a camera that keeps moving.
+- **Ground overlays** must sit ≥ 0.05 above `floorY` or the KayKit floor tiles hide them (the movement range was
+  invisible in Milestone 1 because of this).
+- **HUD:** panels scale with the window via CSS `zoom: var(--ui)`; never apply it to things positioned from 3D
+  projections (nameplates, floating text, tooltips). Nameplates carry `party` / `enemy` classes, so don't use those
+  as panel class names.
 - **Lights:** never add or remove lights during play. three.js recompiles every shader when the light count changes,
   which is a hitch on a GPU and a long freeze in SwiftShader. Effects borrow lights from the pool in `effects.ts`.
 - **"Once per turn" features** (Sneak Attack, Savage Attacker) key off `combat.turnSerial`, not the creature's own turn,

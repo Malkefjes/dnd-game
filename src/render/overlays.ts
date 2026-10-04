@@ -29,7 +29,8 @@ export class Overlays {
     });
   }
 
-  private y(x: number, y: number) { return this.r.floorY(x, y) + 0.015; }
+  // just above the top of the KayKit floor tiles (lower and the floor hides it)
+  private y(x: number, y: number) { return this.r.floorY(x, y) + 0.05; }
 
   /** Show the region a creature can still walk to, as an outlined area. */
   setReach(tiles: P[], origin?: P) {
@@ -37,10 +38,11 @@ export class Overlays {
     if (!tiles.length) return;
     const set = new Set(tiles.map((t) => `${t.x},${t.y}`));
     if (origin) set.add(`${origin.x},${origin.y}`);
-    const fill = additive(0x7cc4ff, 0.06), edge = additive(0x8fd0ff, 0.85);
+    const fill = additive(0x5aa8ff, 0.07), edge = additive(0x9fd8ff, 0.8), grid = additive(0x8fd0ff, 0.14);
     const quad = new THREE.PlaneGeometry(0.96, 0.96);
-    const w = 0.05;
+    const w = 0.07;
     const hStrip = new THREE.PlaneGeometry(1 + w, w), vStrip = new THREE.PlaneGeometry(w, 1 + w);
+    const hThin = new THREE.PlaneGeometry(1, 0.03), vThin = new THREE.PlaneGeometry(0.03, 1);
     for (const k of set) {
       const [x, y] = k.split(',').map(Number);
       const yy = this.y(x, y);
@@ -50,6 +52,10 @@ export class Overlays {
       if (!set.has(`${x},${y + 1}`)) add(hStrip, x, y + 0.5);
       if (!set.has(`${x - 1},${y}`)) add(vStrip, x - 0.5, y);
       if (!set.has(`${x + 1},${y}`)) add(vStrip, x + 0.5, y);
+      // faint lines between squares inside the area: the floor tiles are octagons, the rules grid is square
+      const inner = (geo: THREE.PlaneGeometry, cx: number, cz: number) => { const m = new THREE.Mesh(geo, grid); m.rotation.x = -Math.PI / 2; m.position.set(cx, yy + 0.001, cz); this.reach.add(m); };
+      if (set.has(`${x + 1},${y}`)) inner(vThin, x + 0.5, y);
+      if (set.has(`${x},${y + 1}`)) inner(hThin, x, y + 0.5);
     }
   }
 

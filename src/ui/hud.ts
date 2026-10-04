@@ -23,7 +23,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 export class Hud {
   readonly root = document.createElement('div');
   private initEl = el('div', 'initiative panel');
-  private partyEl = el('div', 'party');
+  private partyEl = el('div', 'party-frames');
   private logEl = el('div', 'log panel interactive');
   private logLines = el('div', 'log-lines');
   private hotbarEl = el('div', 'hotbar panel interactive');
@@ -42,6 +42,9 @@ export class Hud {
     for (const e of [this.tipEl, this.tagEl, this.slotTipEl]) e.style.display = 'none';
     this.root.append(this.initEl, this.partyEl, this.logEl, this.hotbarEl, this.tipEl, this.tagEl, this.slotTipEl);
     document.body.appendChild(this.root);
+    // scale the panels with the window: designed for 900 px tall, readable from 720p to 4K
+    const scale = () => document.documentElement.style.setProperty('--ui', String(Math.min(1.6, Math.max(0.85, innerHeight / 900))));
+    scale(); addEventListener('resize', scale);
     this.hotbarEl.addEventListener('click', (ev) => {
       const t = (ev.target as HTMLElement).closest<HTMLElement>('[data-slot]');
       if (t && !t.classList.contains('disabled')) this.onSlot(t.dataset.slot!);
@@ -52,9 +55,12 @@ export class Hud {
       if (!t) { this.slotTipEl.style.display = 'none'; return; }
       this.slotTipEl.innerHTML = t.dataset.tip!;
       this.slotTipEl.style.display = 'block';
+      // above the whole hotbar (and its picker), centred on the slot, so it never covers other slots
       const r = t.getBoundingClientRect();
-      this.slotTipEl.style.left = `${Math.min(innerWidth - 300, Math.max(10, r.left - 120))}px`;
-      this.slotTipEl.style.top = `${r.top - this.slotTipEl.offsetHeight - 10}px`;
+      const bar = (this.hotbarEl.querySelector('.picker') ?? this.hotbarEl).getBoundingClientRect();
+      const w = this.slotTipEl.offsetWidth;
+      this.slotTipEl.style.left = `${Math.min(innerWidth - w - 10, Math.max(10, r.left + r.width / 2 - w / 2))}px`;
+      this.slotTipEl.style.top = `${Math.min(bar.top, this.hotbarEl.getBoundingClientRect().top) - this.slotTipEl.offsetHeight - 10}px`;
     });
     this.hotbarEl.addEventListener('mouseleave', () => { this.slotTipEl.style.display = 'none'; });
     this.partyEl.addEventListener('click', (ev) => {
@@ -69,7 +75,8 @@ export class Hud {
   }
 
   renderInitiative(entries: InitEntry[], round: number) {
-    this.initEl.innerHTML = `<div class="round">Round ${round}</div>` + entries.map((e) => `
+    const active = entries.find((e) => e.active);
+    this.initEl.innerHTML = `<div class="round">Round ${round}${active ? `<span class="who side-${active.side}">${esc(active.name)}</span>` : ''}</div>` + entries.map((e) => `
       <div class="init ${e.active ? 'active' : ''} ${e.dead ? 'gone' : ''}" title="${esc(e.name)} — initiative ${e.initiative}">
         ${this.portrait(e.id, e.side, '', e.dead)}
         <div class="init-hp"><div style="width:${e.hidden ? 100 : Math.round(e.hpFrac * 100)}%"></div></div>
@@ -82,7 +89,7 @@ export class Hud {
         ${this.portrait(c.id, c.side, 'lg', c.dead)}
         <div class="party-info">
           <div class="pname">${esc(c.name)}</div>
-          ${hpBar(c.hp, c.maxHp)}
+          ${hpBar(c.hp, c.maxHp, true)}
           <div class="pstatus">${esc(c.status)}</div>
         </div>
       </div>`).join('');
@@ -99,10 +106,11 @@ export class Hud {
     const prevPct = s.previewMove !== undefined ? Math.round((Math.max(0, s.movement - s.previewMove) / Math.max(1, s.speed)) * 100) : movePct;
     const slotHtml = (list: Slot[], prefix: string, extra = '') => list.map((sl, i) => `
       <div class="slot ${extra} cost-${sl.cost} ${sl.enabled ? '' : 'disabled'} ${sl.selected ? 'selected' : ''}" data-slot="${sl.key}" data-tip="${esc(sl.tip)}">
-        ${icon(sl.icon, 27)}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}<span class="key">${i < 10 ? prefix + ((i + 1) % 10) : ''}</span>
+        ${icon(sl.icon, 26)}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}${i < 10 ? `<span class="key">${prefix}${(i + 1) % 10}</span>` : ''}
       </div>`).join('');
     const slots = slotHtml(s.slots, '');
     const spells = s.spells?.length ? `<div class="slots spells">${slotHtml(s.spells, '⇧', 'spell')}</div>` : '';
+    const rowLabel = (t: string, hint: string) => `<div class="row-label" title="${esc(hint)}">${t}</div>`;
     const roman = ['', 'I', 'II', 'III', 'IV', 'V'];
     const pips = s.pips?.length ? `<span class="spell-pips" title="Spell slots">${s.pips.map((p) => `<span class="lvl">${roman[p.level]}</span>${'<i class="on"></i>'.repeat(p.left)}${'<i></i>'.repeat(Math.max(0, p.max - p.left))}`).join('')}</span>` : '';
     const conc = s.concentration ? `<span class="conc" title="Concentrating">◈ ${esc(s.concentration)}</span>` : '';
@@ -113,8 +121,8 @@ export class Hud {
         ${this.portrait(s.id, s.side, 'xl')}
         <div>
           <div class="aname">${esc(s.name)}</div>
-          <div class="atitle">${esc(s.title)} · AC ${s.ac}</div>
-          ${hpBar(s.hp, s.maxHp)}
+          <div class="atitle">${esc(s.title)}</div>
+          <div class="astats"><span class="ac" title="Armor Class">${icon('dodge', 15)}<b>${s.ac}</b></span>${hpBar(s.hp, s.maxHp, s.side === 'party')}</div>
         </div>
       </div>
       <div class="hotbar-main">
@@ -125,11 +133,11 @@ export class Hud {
           <div class="move" title="Movement"><div class="move-fill" style="width:${movePct}%"></div><div class="move-preview" style="left:${prevPct}%; width:${movePct - prevPct}%"></div><span>${s.movement} / ${s.speed} ft</span></div>
           ${pips}${conc}
         </div>
-        <div class="slots">${slots}</div>
-        ${spells}
+        <div class="slot-row">${rowLabel('Act', 'Keys 1–0')}<div class="slots">${slots}</div></div>
+        ${spells ? `<div class="slot-row">${rowLabel('Spell', 'Shift + 1–0')}${spells}</div>` : ''}
       </div>
       ${picker}
-      <div class="end-turn" data-tip="End your turn. <i>(Space)</i>">${icon('hourglass', 21)}<span>End Turn</span></div>`;
+      <div class="end-turn ${s.actions <= 0 && s.bonus <= 0 ? 'suggest' : ''}" data-tip="End your turn. <i>(Space)</i>">${icon('hourglass', 21)}<span>End Turn</span></div>`;
   }
 
   log(text: string, tone = 'info') {
@@ -220,7 +228,10 @@ export class Hud {
 }
 
 function el(tag: string, cls: string): HTMLElement { const e = document.createElement(tag); e.className = cls; return e; }
-export function hpBar(hp: number, max: number): string {
-  return `<div class="hp"><div class="fill" style="width:${Math.round((hp / max) * 100)}%"></div><span>${hp} / ${max}</span></div>`;
+/** HP bar. Party bars go green → amber → red so health reads at a glance; enemy bars stay red. */
+export function hpBar(hp: number, max: number, party = false): string {
+  const f = hp / max;
+  const tone = !party ? '' : f > 0.5 ? 'ok' : f > 0.25 ? 'hurt' : 'low';
+  return `<div class="hp ${tone}"><div class="fill" style="width:${Math.round(f * 100)}%"></div><span>${hp} / ${max}</span></div>`;
 }
 export { esc };

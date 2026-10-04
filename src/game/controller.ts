@@ -193,7 +193,7 @@ export class GameController {
     const c = this.combat;
     const reactor = c.get(p.reactor);
     const v = this.vm.get(reactor.id)!;
-    this.r.lookAt(v.pos.x, v.pos.y);
+    this.r.ensureVisible(v.pos.x, v.pos.y);
     if (p.kind === 'opportunity') {
       const t = c.get(p.target);
       const atk = c.bestMeleeAttack(reactor, t);
@@ -785,7 +785,7 @@ export class GameController {
       case 'turnStart': {
         this.activeId = e.id; this.round = e.round;
         const c = this.combat.get(e.id), v = this.vm.get(e.id)!;
-        r.lookAt(v.pos.x, v.pos.y);
+        r.ensureVisible(v.pos.x, v.pos.y, 0.55);
         this.ov.setActive(v.pos);
         this.refreshHud();
         if (c.side === 'party') { this.hud.banner(`${c.name}'s Turn`); await r.wait(0.5); }
@@ -810,7 +810,7 @@ export class GameController {
             fig.position.y = y0 + (y1 - y0) * k + (climb ? Math.sin(Math.PI * k) * 0.3 : 0);
           });
           v.pos = { ...b };
-          if (!hiddenEnemy) r.lookAt(b.x, b.y);
+          if (!hiddenEnemy) r.ensureVisible(b.x, b.y, 0.75);
         }
         ch.loop('Idle', 0.2);
         return;
@@ -922,7 +922,7 @@ export class GameController {
         await r.tween(0.2, (k) => { f.group.scale.setScalar(1 - k * 0.9); });
         f.group.position.set(e.to.x, r.floorY(e.to.x, e.to.y), e.to.y);
         v.pos = { ...e.to };
-        r.lookAt(e.to.x, e.to.y);
+        r.ensureVisible(e.to.x, e.to.y);
         this.fx.burst(r.worldOf(e.to.x, e.to.y).setY(r.floorY(e.to.x, e.to.y) + 0.6), SPELL_COLOR.mistyStep, 24, 0.6, 1.2);
         await r.tween(0.2, (k) => { f.group.scale.setScalar(0.1 + k * 0.9); });
         f.group.scale.setScalar(1);

@@ -312,6 +312,20 @@ export class PixelRenderer {
   // ------------------------------------------------------------ camera
 
   lookAt(x: number, z: number, instant = false) { this.focusGoal.set(x, 0, z); if (instant) this.focus.copy(this.focusGoal); }
+
+  /**
+   * Bring a square into view only if it isn't comfortably on screen already (inside the
+   * middle `margin` fraction of the view). Keeps the camera still unless it has to move.
+   */
+  ensureVisible(x: number, z: number, margin = 0.6) {
+    const p = new THREE.Vector3(x, this.map.floorY(x, z), z);
+    // judge against where the camera is heading, not where it is mid-ease
+    const saved = this.focus.clone();
+    this.focus.copy(this.focusGoal); this.updateCamera();
+    const ndc = p.clone().project(this.camera);
+    this.focus.copy(saved); this.updateCamera();
+    if (Math.abs(ndc.x) > margin || Math.abs(ndc.y) > margin) this.lookAt(x, z);
+  }
   pan(dx: number, dz: number) { this.focusGoal.x += dx; this.focusGoal.z += dz; this.clampFocus(); }
   setZoom(z: number) { this.zoom = Math.min(8, Math.max(2.8, z)); this.updateCamera(); }
   private clampFocus() {
@@ -382,16 +396,20 @@ export class PixelRenderer {
 
   frame(dt: number) {
     this.time += dt;
+    // camera first, so anything projected to the screen this frame (nameplates, floating text) lines up
+    this.focus.lerp(this.focusGoal, 1 - Math.pow(0.004, dt));
+    this.updateCamera();
     for (const fn of [...this.updaters]) if (fn(dt) === true) this.updaters.delete(fn);
     for (const f of this.figures.values()) f.character.update(dt);
     for (const t of this.torches) {
-      const f = 0.82 + Math.sin(this.time * 9 + t.phase) * 0.06 + Math.sin(this.time * 23.7 + t.phase * 2) * 0.05 + Math.sin(this.time * 3.1 + t.phase) * 0.07;
+      // A slow, shallow breathing of the light. Fast flicker made the banded lighting crawl across
+      // the whole floor (the quantised bands jump with every small change in brightness).
+      const f = 0.95 + Math.sin(this.time * 1.3 + t.phase) * 0.03 + Math.sin(this.time * 2.1 + t.phase * 2) * 0.02;
       t.light.intensity = t.base * f;
-      t.flames.scale.set(1, 0.85 + f * 0.25, 1);
+      // the flames themselves can dance: they're small and don't light anything
+      t.flames.scale.set(1, 0.9 + Math.sin(this.time * 7 + t.phase) * 0.08, 1);
       t.flames.rotation.y += dt * 2;
     }
-    this.focus.lerp(this.focusGoal, 1 - Math.pow(0.0015, dt));
-    this.updateCamera();
 
     // snap figures to whole pixels for the render (keeps sprites crisp while they move)
     const saved: [THREE.Group, THREE.Vector3][] = [];

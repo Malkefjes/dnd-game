@@ -158,7 +158,7 @@ export class Combat {
     rolls.sort((a, b) => b.total - a.total || b.tiebreak - a.tiebreak);
     this.order.push(...rolls.map((r) => r.c.id));
     this.emit({ type: 'initiative', order: rolls.map((r) => ({ id: r.c.id, total: r.total })) });
-    this.emit({ type: 'log', tone: 'turn', text: `Initiative: ${rolls.map((r) => `${r.c.name} ${r.total}`).join(', ')}` });
+    this.emit({ type: 'log', tone: 'info', text: `Initiative order: ${rolls.map((r) => `${r.c.name} ${r.total}`).join(', ')}` });
     this.round = 1;
     this.turnIndex = -1;
     this.advanceTurn();
