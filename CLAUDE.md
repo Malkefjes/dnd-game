@@ -51,10 +51,14 @@ AI-vs-AI sims give the party ~85% wins over ~9 rounds (300 seeds). A human contr
    - playtesting with a human on a real GPU (performance with 13 figures; the effect light pool)
    - Counterspell and other reaction spells (the prompt mechanism is ready for them)
    - a way to choose the party's level / prepared spells before a fight (data supports it; there's no UI)
-2. **Milestone 3:** a short dungeon of 5–6 encounters with exploration between fights:
-   - short/long rests, levelling, loot
-   - terrain interaction (shove off ledges, elevation, surfaces)
-3. Then expand: more classes/subclasses, monsters, levels up to ~10, more maps.
+2. **Milestone 3: The Hollow Abbey** (next; full plan in [`docs/milestone-3.md`](docs/milestone-3.md)). One
+   hand-built dungeon on two floors, explored BG3-style: free movement, sneaking, enemy sight lines, and you choose
+   how each fight starts (Surprise, splitting the party). A character creator (2024 species, backgrounds, origin
+   feats, point buy) for your level 1 hero plus three companions; levels 1 → 4; rests, XP, loot. **Enemies are
+   undead and fiends only; no goblins in the campaign** (the den stays as a test fixture). Build order: Phase 0
+   groundwork (campaign state, saves, map format v2, big-map performance) → 1 character creator → 2 exploration →
+   3 undead/fiend rules and bestiary → 4 rests/levelling/loot → 5 the abbey content → 6 balance. Paladin is optional.
+3. Then expand: level 5+ (Extra Attack, 3rd-level spells), more classes and subclasses, more dungeons.
 
 ### Known gaps / rough edges
 
