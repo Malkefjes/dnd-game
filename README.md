@@ -7,11 +7,13 @@ A turn-based, single-player, isometric D&D combat game for the browser, built on
 
 **▶ Play it: https://malkefjes.github.io/dnd-game/** · Working on it with Claude? Start with [`CLAUDE.md`](CLAUDE.md). · [style mockups](https://malkefjes.github.io/dnd-game/mockups/)
 
-## Status: Milestone 2 (playable)
+## Status: Milestone 3 in progress — The Hollow Abbey
 
-One encounter, the goblin den, now with a full party of four at level 3: **Torvald** (Dwarf Fighter, Champion),
-**Nyx** (Halfling Rogue, Assassin), **Maren** (Human Cleric, Life Domain) and **Elowen** (Elf Wizard, Evoker) against
-Grukk's goblins and their hobgoblin muscle. Milestone 2 added the spellcasting system and levels 1–3.
+A sealed abbey whose dead have started walking. Milestone 3 turns the game into a single dungeon explored BG3-style,
+with a character creator and undead and fiend enemies ([plan](docs/milestone-3.md)). Phase 0 (the groundwork) is
+playable: the four premade heroes at level 1 explore test versions of the abbey and the crypt, open doors, read notes,
+and fight skeletons and zombies. The game saves as you go. Milestone 2's goblin den is still there as a dev fight
+(`?den=1`).
 
 | Part | State |
 |---|---|

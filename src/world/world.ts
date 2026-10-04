@@ -40,6 +40,12 @@ export interface WorldState {
   saves: number;
 }
 
+/** A group member's stat block, with its figure override if any. */
+export function monsterDef(m: GroupDef['members'][number]): CreatureDef {
+  const def = MONSTERS[m.monster](m.id, m.name);
+  return m.model ? { ...def, model: m.model } : def;
+}
+
 /** Conditions that outlast a fight. Everything else (Bless, Dodge, Prone, Sleep…) ends with it. */
 const LASTING: Condition['id'][] = ['aided'];
 
@@ -194,7 +200,7 @@ export class World {
     const group = this.map.groups.find((g) => g.id === groupId)!;
     const combat = new Combat(this.grid, this.rng);
     for (const h of this.living()) combat.add(this.heroDef(h), h.pos, h);
-    for (const m of group.members) combat.add(MONSTERS[m.monster](m.id, m.name), m.at);
+    for (const m of group.members) combat.add(monsterDef(m), m.at);
     return combat;
   }
 

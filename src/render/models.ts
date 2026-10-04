@@ -1,12 +1,16 @@
 // The visual map (tile kinds and floor heights) plus small shared helpers.
 import * as THREE from 'three';
 
-export type TileKind = 'floor' | 'wall' | 'door' | 'pillar' | 'rubble' | 'platform' | 'stairs' | 'barrel' | 'brazier';
+export type TileKind =
+  | 'floor' | 'dirt' | 'wall' | 'door' | 'gate' | 'pillar' | 'rubble' | 'platform' | 'stairs' | 'barrel' | 'brazier'
+  | 'grave' | 'coffin' | 'altar' | 'water' | 'down' | 'up' | 'void';
 export interface Tile { x: number; y: number; kind: TileKind; h: number }
-export type Archetype = 'fighter' | 'rogue' | 'cleric' | 'wizard' | 'goblin' | 'goblinArcher' | 'goblinBoss' | 'hobgoblin' | 'skeleton' | 'zombie';
+export type Archetype = 'fighter' | 'rogue' | 'cleric' | 'wizard' | 'goblin' | 'goblinArcher' | 'goblinBoss' | 'hobgoblin' | 'skeleton' | 'skeletonWarrior' | 'skeletonRogue' | 'skeletonMage' | 'zombie';
 
+/** Same glyphs as the rules grid (engine/grid.ts MAP_LEGEND). `d` is a door that opens; `D` an open archway. */
 const LEGEND: Record<string, TileKind> = {
-  '#': 'wall', D: 'door', '.': 'floor', P: 'pillar', r: 'rubble', H: 'platform', S: 'stairs', b: 'barrel', B: 'brazier',
+  '#': 'wall', D: 'door', d: 'gate', '.': 'floor', ',': 'dirt', P: 'pillar', r: 'rubble', H: 'platform', S: 'stairs', b: 'barrel', B: 'brazier',
+  t: 'grave', c: 'coffin', a: 'altar', w: 'water', '>': 'down', '<': 'up', ' ': 'void',
 };
 
 /** The visual map, built from the same rows as the rules grid. */
@@ -26,7 +30,7 @@ export class DungeonMap {
   }
   floorY(x: number, y: number): number { return (this.tileAt(x, y)?.h ?? 0) * LEVEL; }
   center(): THREE.Vector3 { return new THREE.Vector3((this.width - 1) / 2, 0, (this.height - 1) / 2); }
-  isWall(x: number, y: number): boolean { const k = this.tileAt(x, y)?.kind; return k === 'wall' || k === 'door'; }
+  isWall(x: number, y: number): boolean { const k = this.tileAt(x, y)?.kind; return k === 'wall' || k === 'door' || k === 'gate'; }
 }
 
 

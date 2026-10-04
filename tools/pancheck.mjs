@@ -3,7 +3,7 @@
 // any pattern fixed to the screen (dither, banding) shows up as a high score — that's "shaking".
 //   node tools/pancheck.mjs [url]
 import { chromium } from 'playwright';
-const url = process.argv[2] ?? 'http://127.0.0.1:5173/?seed=5&play=1';
+const url = process.argv[2] ?? 'http://127.0.0.1:5173/?den=1&seed=5';
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1200, height: 750 } });
 page.on('pageerror', (e) => console.log('[pageerror]', e.message));

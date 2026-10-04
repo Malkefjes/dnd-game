@@ -11,6 +11,8 @@ export const DUNGEON_PIECES = [
   'floor_tile_large_rocks', 'floor_foundation_allsides', 'wall_half', 'wall_arched', 'pillar', 'stairs_narrow',
   'barrel_large', 'barrel_small_stack', 'keg', 'crates_stacked', 'box_small', 'torch_mounted', 'banner_red', 'banner_patternA_red', 'banner_shield_brown',
   'candle_triple', 'sword_shield_broken', 'coin_stack_small', 'bottle_A_green', 'trunk_small_A', 'column',
+  'wall_doorway', 'chest', 'floor_dirt_large', 'floor_dirt_small_A', 'floor_dirt_small_B', 'floor_dirt_small_C', 'rubble_large', 'candle_lit',
+  'banner_thin_white', 'banner_patternB_white', 'wall',
 ] as const;
 export type Piece = typeof DUNGEON_PIECES[number];
 
@@ -59,9 +61,13 @@ export const MODEL_SPECS: Record<Archetype, ModelSpec> = {
   goblinBoss: { file: 'Barbarian', scale: [0.44, 0.4, 0.44], show: ['1H_Axe', 'Barbarian_Round_Shield', 'Barbarian_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', skin: { hue: 0.25, sat: 0.55, ears: true } },
   // hobgoblins: knight-sized, red-orange skin, half plate and a longsword (KayKit has no bow: it shoots a crossbow-less "Throw")
   hobgoblin: { file: 'Knight', scale: [0.5, 0.5, 0.5], show: ['1H_Sword', 'Rectangle_Shield', 'Knight_Helmet'], melee: '1H_Melee_Attack_Slice_Horizontal', ranged: '1H_Ranged_Shoot', skin: { hue: 0.03, sat: 0.55, ears: true } },
-  // undead (KayKit Skeletons pack): a sword-and-board skeleton that swaps to a crossbow to shoot
-  skeleton: { file: 'Skeleton_Warrior', scale: [0.5, 0.5, 0.5], show: ['Skeleton_Warrior_Helmet', 'Skeleton_Warrior_Cloak'], props: [{ file: 'Skeleton_Blade', hand: 'r' }, { file: 'Skeleton_Shield_Small_A', hand: 'l' }],
+  // undead (KayKit Skeletons pack). The plain skeleton is bare bone with a blade (the 2025 stat block
+  // has no shield); the armoured warrior body is kept for tougher dead later.
+  skeleton: { file: 'Skeleton_Minion', scale: [0.5, 0.5, 0.5], show: [], props: [{ file: 'Skeleton_Blade', hand: 'r' }], melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '1H_Ranged_Shoot', walk: 'Walking_C' },
+  skeletonWarrior: { file: 'Skeleton_Warrior', scale: [0.5, 0.5, 0.5], show: ['Skeleton_Warrior_Helmet', 'Skeleton_Warrior_Cloak'], props: [{ file: 'Skeleton_Blade', hand: 'r' }, { file: 'Skeleton_Shield_Small_A', hand: 'l' }],
     melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '1H_Ranged_Shoot', walk: 'Walking_C' },
+  skeletonRogue: { file: 'Skeleton_Rogue', scale: [0.5, 0.5, 0.5], show: ['Skeleton_Rogue_Hood', 'Skeleton_Rogue_Cape'], props: [{ file: 'Skeleton_Blade', hand: 'r' }], melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '1H_Ranged_Shoot', walk: 'Walking_C' },
+  skeletonMage: { file: 'Skeleton_Mage', scale: [0.5, 0.5, 0.5], show: ['Skeleton_Mage_Hat'], props: [{ file: 'Skeleton_Staff', hand: 'r' }], melee: '1H_Melee_Attack_Stab', ranged: 'Spellcast_Shoot', walk: 'Walking_C' },
   // a zombie: a human body with grey-green skin, shambling
   zombie: { file: 'Rogue', scale: [0.5, 0.48, 0.5], show: [], melee: 'Unarmed_Melee_Attack_Punch_A', ranged: 'Throw', walk: 'Walking_D_Skeletons', skin: { hue: 0.2, sat: 0.18, light: 0.85 } },
 };
@@ -96,6 +102,8 @@ export class AssetLibrary {
 
   /** A fresh copy of a dungeon piece (geometry and materials are shared). */
   piece(name: Piece): THREE.Object3D { return this.pieces.get(name)!.clone(true); }
+  /** The loaded original, for instancing (don't add it to the scene). */
+  pieceSource(name: Piece): THREE.Object3D { return this.pieces.get(name)!; }
 
   /** Build an animated character for an archetype. */
   character(archetype: Archetype): Character {
@@ -288,8 +296,10 @@ export class Character {
 
   private pending: { elapsed: { t: number }; a: THREE.AnimationAction }[] = [];
 
-  update(dt: number) {
-    this.mixer.update(dt);
+  private skipped = 0;
+  /** Advance the animation. With `animate` false (far off screen) only the clocks move; the pose catches up later. */
+  update(dt: number, animate = true) {
+    if (animate) { this.mixer.update(dt + this.skipped); this.skipped = 0; } else this.skipped += dt;
     for (const p of this.pending) p.elapsed.t += dt;
     this.pending = this.pending.filter((p) => p.elapsed.t < 30);
   }

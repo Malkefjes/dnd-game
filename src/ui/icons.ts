@@ -43,6 +43,7 @@ const P: Record<string, string> = {
   spark: '<path d="M12 2v5M12 17v5M2 12h5M17 12h5M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3"/><circle cx="12" cy="12" r="2.5"/>',
   preserve: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/>',
   steadyAim: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/>',
+  save: '<path d="M5 3h11l3 3v15H5Z"/><path d="M8 3v5h7V3"/><path d="M8 21v-7h8v7"/>',
   strike: '<path d="M6 3h7v5H6z"/><path d="M9.5 8v13"/><path d="M15 4l5 0M17 8l4 1M16 12h5"/>',
 };
 

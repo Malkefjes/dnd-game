@@ -10,7 +10,8 @@ export function inRect(r: Rect, p: Pos): boolean { return p.x >= r.x && p.y >= r
 export interface GroupDef {
   id: string;
   name: string;
-  members: { id: string; monster: string; name?: string; at: Pos }[];
+  /** `model` swaps the 3D figure only (the rules come from `monster`). */
+  members: { id: string; monster: string; name?: string; model?: string; at: Pos }[];
   /**
    * Squares that start the fight when a hero steps into them. (Phase 2 replaces this
    * with sight lines and Surprise; until then, entering the room starts the fight.)

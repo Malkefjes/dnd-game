@@ -14,6 +14,8 @@ export interface HotbarState {
   /** Spell slots by level: left of max. */
   pips?: { level: number; left: number; max: number }[];
   concentration?: string;
+  /** Exploring instead of fighting: a hint line replaces the action economy, and there's no End Turn. */
+  explore?: { hint: string };
   /** Upcast / multi-target picker shown above the hotbar while a spell is being aimed. */
   picker?: { title: string; options: { key: string; label: string; selected: boolean; enabled: boolean }[] };
 }
@@ -74,6 +76,8 @@ export class Hud {
     return `<div class="portrait side-${side} ${cls} ${dead ? 'dead' : ''}">${img ? `<img src="${img}" alt="">` : ''}</div>`;
   }
 
+  setInitiativeVisible(on: boolean) { this.initEl.style.display = on ? '' : 'none'; }
+
   renderInitiative(entries: InitEntry[], round: number) {
     const active = entries.find((e) => e.active);
     this.initEl.innerHTML = `<div class="round">Round ${round}${active ? `<span class="who side-${active.side}">${esc(active.name)}</span>` : ''}</div>` + entries.map((e) => `
@@ -126,18 +130,18 @@ export class Hud {
         </div>
       </div>
       <div class="hotbar-main">
-        <div class="economy">
+        ${s.explore ? `<div class="explore-hint">${s.explore.hint}</div>` : `<div class="economy">
           ${'<span class="pip action on" title="Action"></span>'.repeat(Math.max(1, s.actions)).replace(/ on/g, s.actions > 0 ? ' on' : '')}<span class="lbl">Action</span>
           <span class="pip bonus ${s.bonus > 0 ? 'on' : ''}" title="Bonus Action"></span><span class="lbl">Bonus</span>
           <span class="pip reaction ${s.reaction ? 'on' : ''}" title="Reaction"></span><span class="lbl">Reaction</span>
           <div class="move" title="Movement"><div class="move-fill" style="width:${movePct}%"></div><div class="move-preview" style="left:${prevPct}%; width:${movePct - prevPct}%"></div><span>${s.movement} / ${s.speed} ft</span></div>
           ${pips}${conc}
-        </div>
+        </div>`}
         <div class="slot-row">${rowLabel('Act', 'Keys 1–0')}<div class="slots">${slots}</div></div>
         ${spells ? `<div class="slot-row">${rowLabel('Spell', 'Shift + 1–0')}${spells}</div>` : ''}
       </div>
       ${picker}
-      <div class="end-turn ${s.actions <= 0 && s.bonus <= 0 ? 'suggest' : ''}" data-tip="End your turn. <i>(Space)</i>">${icon('hourglass', 21)}<span>End Turn</span></div>`;
+      ${s.explore ? '' : `<div class="end-turn ${s.actions <= 0 && s.bonus <= 0 ? 'suggest' : ''}" data-tip="End your turn. <i>(Space)</i>">${icon('hourglass', 21)}<span>End Turn</span></div>`}`;
   }
 
   log(text: string, tone = 'info') {

@@ -21,25 +21,30 @@ Story is told through short text beats: room descriptions, journals, inscription
 | Structure | One dungeon, explored freely. No world map, towns, quests or dialogue trees. |
 | Enemies | Undead and fiends only (SRD 5.2 / 2025 Monster Manual). No goblins in the campaign. |
 | Start | Level 1, made in a BG3-style character creator. |
-| Party | Your hero plus three companions, met early in the abbey. Every companion can be swapped for a custom character in the creator. *(Default; confirm with the owner.)* |
-| Level cap | 4 for this milestone (level 4 brings the first feat). Level 5 (Extra Attack, 3rd-level spells) is the next milestone. *(Default; confirm.)* |
-| Classes | Fighter, Rogue, Cleric, Wizard (already built). Paladin (Oath of Devotion) is an optional phase, because it fits the theme. *(Ask.)* |
+| Party | Your hero plus three companions, met in the abbey (confirmed). Every companion can be swapped for a custom character in the creator. |
+| Level cap | 4 for this milestone (confirmed). Level 5 (Extra Attack, 3rd-level spells) is the next milestone. |
+| Classes | Fighter, Rogue, Cleric, Wizard (already built) and **Paladin (Oath of Devotion), confirmed**: built in Phase 1 with the creator. |
 
 ## Phase 0: Groundwork
 
 The plumbing everything else needs.
 
-- [ ] **Campaign state.** Separate what lasts (the party, HP, slots, inventory, XP, the map, the state of every
-      enemy group and door) from one combat. `Combat` becomes something that runs *inside* the world, not the world.
-- [ ] **Save and load** to `localStorage`: an autosave on entering each area and a manual save. Seeded RNG state is
-      included, so a reload replays the same rolls.
-- [ ] **Map format v2:** rows for terrain, plus a JSON sidecar for doors (locked or not), levers, chests, traps,
-      light sources, enemy groups with patrol routes, story text, rest spots and area triggers.
-- [ ] **Big maps that still run fast:** one figure per creature costs a lot, so far-away torches stop casting
-      shadows, out-of-view figures skip their animation update, and the dungeon mesh is built in chunks.
-- [ ] **Two floors** (the ruined abbey above, the crypts below), each its own map, joined by stairs. There's a
-      short load and the party arrives at the matching stair.
-- [ ] Remove the goblin den from the main flow. It stays in `encounters.ts` as a fixture for the tests and sims.
+- [x] **Campaign state** (`src/world/world.ts`): the party (HP, slots, items, positions), every floor's open doors
+      and beaten groups, and the dice. `beginCombat()` builds a `Combat` from it; `finishCombat()` writes back.
+- [x] **Save and load** to `localStorage`: autosave on changing floors and after every fight, plus a Save button.
+      The dice are saved too, so a reload rolls exactly what it would have.
+- [x] **Map format v2** (`src/world/map.ts`): terrain rows plus stairs, enemy groups (with trigger areas for now),
+      locked doors, notes and rest spots, and a validator run by the tests. Patrol routes, levers, chests, traps and
+      lights arrive with the phases that use them.
+- [x] **Big maps that still run fast:** the dungeon is instanced (one draw call per piece sub-mesh), torch lights
+      come from a fixed pool of 8 (3 with shadows) handed to the torches nearest the camera, the moon's shadow box
+      follows the camera, far-off figures skip their animation work, and solid rock isn't built at all.
+- [x] **Two floors** (the ruined abbey and the crypt), joined by stairs; the party arrives around the matching stair.
+- [x] The goblin den left the main flow: `?den=1` runs it as a dev-only fight (the screenshot tools use it).
+- [x] Also done early: walking around in exploration (the party follows the leader), doors that swing open,
+      readable notes, skeletons that rise from the graves, Skeleton and Zombie stat blocks, damage resistances and
+      immunities, the KayKit skeleton models, and cutaway walls (walls in front of a room are drawn low).
+- [ ] Real-GPU check of the full floor (the owner, on Pages).
 
 **Done when:** a test map loads from the new format, saves, reloads to the same state, and runs smoothly at its full
 size on a real GPU (the owner checks on Pages).
@@ -185,12 +190,12 @@ across save and load.
 - [ ] Performance check on a real GPU with the full floor; an option to raise the pixel size on slow machines.
 - [ ] README and CLAUDE.md updated.
 
-## Optional: Paladin (Oath of Devotion), levels 1–4
+## Paladin (Oath of Devotion), levels 1–4 (confirmed: built with Phase 1)
 
 Lay on Hands, Weapon Mastery, Fighting Style, spellcasting with Divine Smite (a spell in 2024: a Bonus Action after
 a hit, radiant damage, an extra d8 against fiends and undead), Channel Divinity and Sacred Weapon at 3. Aura of
 Protection arrives at level 6, outside this milestone. It fits the theme best of any class; add it after Phase 2 if
-the owner wants it.
+the owner wants it. *(The owner wants it: build it alongside the creator in Phase 1.)*
 
 ## Risks
 
@@ -204,4 +209,6 @@ the owner wants it.
 
 ## Status
 
-- Phase 0: not started
+- Phase 0: done, apart from the owner's real-GPU check. Playable on Pages as a test build: the four premade heroes
+  at level 1 explore the abbey and crypt test floors and fight skeletons and zombies.
+- Next: Phase 1, the character creator, with the Paladin.

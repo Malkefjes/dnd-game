@@ -10,7 +10,7 @@ for (const [w, h] of [[1280, 720], [1920, 1080]]) {
   page.on('pageerror', (e) => console.log('[pageerror]', e.message));
   await page.goto(url);
   await page.waitForFunction(() => window.game && !window.game.busy && window.game.combat.active?.controller === 'player', null, { timeout: 180000 });
-  await page.evaluate((id) => { const g = window.game; const c = g.combat; c.turnIndex = c.order.indexOf(id); g.activeId = id; g.refreshHud(); const p = c.get(id).pos; g.r.lookAt(p.x + 2, p.y - 2, true); }, hero);
+  await page.evaluate((id) => { const g = window.game; const c = g.combat; c.turnIndex = c.order.indexOf(id); g.view.activeId = id; g.view.refreshHud(); const p = c.get(id).pos; g.r.lookAt(p.x + 2, p.y - 2, true); }, hero);
   await page.waitForTimeout(1500);
   const xy = await page.evaluate((t) => window.game.r.projectHead(t, -0.3), hover);
   await page.mouse.move(xy.x, xy.y);

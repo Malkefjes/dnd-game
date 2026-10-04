@@ -77,13 +77,16 @@ export interface FigureView {
   down: boolean;
 }
 
-interface Torch { light: THREE.PointLight; base: number; phase: number; flames: THREE.Group }
+/** A flame in the world. Lights come from a fixed pool handed to the torches nearest the camera. */
+interface Torch { pos: THREE.Vector3; base: number; phase: number; flames: THREE.Group; range: number }
+/** Torch lights, and how many of them cast shadows. Fixed counts: changing the number of lights recompiles every shader. */
+const TORCH_LIGHTS = 8, SHADOW_LIGHTS = 3;
 
 export class PixelRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera: THREE.OrthographicCamera;
-  readonly map: DungeonMap;
+  map: DungeonMap;
   readonly figures = new Map<string, FigureView>();
   readonly overlay = new THREE.Group();
   readonly pixel: number;
@@ -98,6 +101,9 @@ export class PixelRenderer {
   private postScene = new THREE.Scene();
   private postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private torches: Torch[] = [];
+  private torchPool: THREE.PointLight[] = [];
+  private world?: THREE.Group;
+  private doorLeaves = new Map<string, THREE.Object3D>();
   /** Things that shouldn't write normals (overlays, flames, particles). */
   private noNormals: THREE.Object3D[] = [];
   private pickables: THREE.Object3D[] = [];
@@ -148,30 +154,56 @@ export class PixelRenderer {
   static async create(container: HTMLElement, rows: string[], onProgress?: (done: number, total: number) => void, pixel = 3) {
     const r = new PixelRenderer(container, rows, pixel);
     await r.lib.load(onProgress);
+    r.buildLights();
     r.buildWorld();
     return r;
   }
 
+  /** Swap to another floor: the dungeon and all figures are rebuilt; lights and effects stay. */
+  loadMap(rows: string[]) {
+    for (const id of [...this.figures.keys()]) this.removeFigure(id);
+    if (this.world) {
+      this.scene.remove(this.world);
+      this.world.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh && !(m as THREE.InstancedMesh).isInstancedMesh) m.geometry?.dispose(); });
+    }
+    for (const t of this.torches) { this.scene.remove(t.flames); const i = this.noNormals.indexOf(t.flames); if (i >= 0) this.noNormals.splice(i, 1); }
+    this.torches = [];
+    this.pickables = this.pickables.filter((p) => this.figures.has(p.userData.creatureId));
+    this.map = new DungeonMap(rows);
+    this.buildWorld();
+    this.focus.copy(this.map.center()); this.focusGoal.copy(this.focus);
+  }
+
   // ------------------------------------------------------------ world
 
-  private buildWorld() {
-    const built = buildKayKitDungeon(this.map, this.lib);
-    this.scene.add(built.group);
-    this.pickables.push(...built.pickables);
-
+  /** Lights that exist for the whole game (their number must never change). */
+  private moon!: THREE.DirectionalLight;
+  private buildLights() {
     // cold ambient + faint moonlight for readable shadows; the torches do the rest
     this.scene.add(new THREE.HemisphereLight(0x8c8aa0, 0x2a1a10, 0.7));
     const moon = new THREE.DirectionalLight(0xc8d0ff, 0.5);
-    const c = this.map.center();
-    moon.position.set(c.x + 10, 18, c.z + 4); moon.target.position.copy(c);
-    moon.castShadow = true; moon.shadow.mapSize.set(1024, 1024);
-    Object.assign(moon.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 60 });
+    moon.castShadow = true; moon.shadow.mapSize.set(2048, 2048);
+    Object.assign(moon.shadow.camera, { left: -14, right: 14, top: 14, bottom: -14, near: 1, far: 70 });
     moon.shadow.bias = -0.0006; moon.shadow.normalBias = 0.02;
     this.scene.add(moon, moon.target);
+    this.moon = moon;
+    for (let i = 0; i < TORCH_LIGHTS; i++) {
+      const light = new THREE.PointLight(0xff8a3a, 0, 10, 1.25);
+      if (i < SHADOW_LIGHTS) { light.castShadow = true; light.shadow.mapSize.set(512, 512); light.shadow.bias = -0.003; light.shadow.radius = 1; }
+      this.scene.add(light);
+      this.torchPool.push(light);
+    }
+  }
 
-    let shadowBudget = 3;
-    for (const t of built.torches) this.addTorch(t.pos.clone().addScaledVector(t.dir, 0.15), 8, 0xff8a3a, shadowBudget-- > 0, 0.32, t.pos.y - 0.05, t.pos);
-    for (const b of built.braziers) this.addTorch(b.clone().setY(1.0), 16, 0xff7a2a, shadowBudget-- > 0, 0.9, b.y);
+  private buildWorld() {
+    const built = buildKayKitDungeon(this.map, this.lib);
+    this.world = built.group;
+    this.scene.add(built.group);
+    this.pickables.push(...built.pickables);
+    this.doorLeaves = built.doors;
+
+    for (const t of built.torches) this.addTorch(t.pos.clone().addScaledVector(t.dir, 0.15), 8, 0.32, t.pos.y - 0.05, t.pos, 10);
+    for (const b of built.braziers) this.addTorch(b.clone().setY(1.0), 16, 0.9, b.y, undefined, 12);
 
     // drifting embers / dust
     const r = rng(3), n = 110, pos = new Float32Array(n * 3);
@@ -186,11 +218,7 @@ export class PixelRenderer {
     });
   }
 
-  private addTorch(p: THREE.Vector3, intensity: number, color: number, shadow: boolean, flameScale: number, flameY: number, flameAt = p) {
-    const light = new THREE.PointLight(color, intensity, 10, 1.25);
-    light.position.copy(p);
-    if (shadow) { light.castShadow = true; light.shadow.mapSize.set(512, 512); light.shadow.bias = -0.003; light.shadow.radius = 1; }
-    this.scene.add(light);
+  private addTorch(p: THREE.Vector3, intensity: number, flameScale: number, flameY: number, flameAt = p, range = 10) {
     const flames = new THREE.Group();
     [0xff5a10, 0xffa030, 0xffe8a0].forEach((c, i) => {
       const s = (0.34 - i * 0.09) * flameScale;
@@ -199,7 +227,34 @@ export class PixelRenderer {
     });
     flames.position.set(flameAt.x, flameY, flameAt.z);
     this.scene.add(flames); this.noNormals.push(flames);
-    this.torches.push({ light, base: intensity, phase: Math.random() * 10, flames });
+    this.torches.push({ pos: p.clone(), base: intensity, phase: Math.random() * 10, flames, range });
+  }
+
+  /**
+   * Hand the pooled torch lights to the torches nearest the camera, the closest ones
+   * getting the shadow-casting lights. A torch far away keeps its flame but no light.
+   */
+  private assignTorchLights() {
+    const f = this.focus;
+    const near = [...this.torches].sort((a, b) => a.pos.distanceToSquared(f) - b.pos.distanceToSquared(f)).slice(0, TORCH_LIGHTS);
+    // shadow-casting lights go to the nearest few; the rest of the pool fills in after
+    this.torchPool.forEach((light, i) => {
+      const t = near[i];
+      light.userData.torch = t;
+      if (!t) { light.intensity = 0; return; }
+      light.position.copy(t.pos); light.distance = t.range;
+    });
+    this.lightsAt.copy(f);
+  }
+  private lightsAt = new THREE.Vector3(1e9, 0, 0);
+
+  /** Swing a door open (or shut). */
+  setDoorOpen(x: number, y: number, open: boolean, instant = false) {
+    const hinge = this.doorLeaves.get(`${x},${y}`);
+    if (!hinge) return Promise.resolve();
+    const to = open ? -Math.PI * 0.55 : 0, from = hinge.rotation.y;
+    if (instant) { hinge.rotation.y = to; return Promise.resolve(); }
+    return this.tween(0.35, (k) => { hinge.rotation.y = from + (to - from) * (1 - (1 - k) ** 2); });
   }
 
   // ------------------------------------------------------------ figures
@@ -223,6 +278,15 @@ export class PixelRenderer {
     const view: FigureView = { id, group, character, materials: character.materials, headHeight: Math.max(0.6, (box.max.y - group.position.y) * 0.9), ring, opacity: 1, down: false };
     this.figures.set(id, view);
     return view;
+  }
+
+  removeFigure(id: string) {
+    const v = this.figures.get(id);
+    if (!v) return;
+    this.scene.remove(v.group);
+    this.pickables = this.pickables.filter((p) => p !== v.group);
+    const i = this.noNormals.indexOf(v.ring); if (i >= 0) this.noNormals.splice(i, 1);
+    this.figures.delete(id);
   }
 
   setOpacity(id: string, opacity: number) {
@@ -303,7 +367,8 @@ export class PixelRenderer {
     const out: { tile?: { x: number; y: number }; creatureId?: string } = {};
     for (const h of hits) {
       if (!out.creatureId && h.object.userData.creatureId) out.creatureId = h.object.userData.creatureId;
-      if (!out.tile && h.object.userData.tile) { const t = h.object.userData.tile; out.tile = { x: t.x, y: t.y }; }
+      const tile = h.object.userData.tile ?? (h.instanceId !== undefined ? h.object.userData.tiles?.[h.instanceId] : undefined);
+      if (!out.tile && tile) out.tile = { x: tile.x, y: tile.y };
       if (out.tile) break;
     }
     if (out.creatureId && !out.tile) {
@@ -410,16 +475,28 @@ export class PixelRenderer {
     this.focus.lerp(this.focusGoal, 1 - Math.pow(0.004, dt));
     this.updateCamera();
     for (const fn of [...this.updaters]) if (fn(dt) === true) this.updaters.delete(fn);
-    for (const f of this.figures.values()) f.character.update(dt);
+    // animate figures; ones far off screen only advance their clocks (cheap) until they're near again
+    const reach = this.zoom * 2.2 + 3;
+    for (const f of this.figures.values()) {
+      const far = Math.abs(f.group.position.x - this.focus.x) + Math.abs(f.group.position.z - this.focus.z) > reach * 1.5;
+      f.character.update(dt, !far);
+    }
+    if (this.lightsAt.distanceToSquared(this.focus) > 1) this.assignTorchLights();
     for (const t of this.torches) {
-      // A slow, shallow breathing of the light. Fast flicker made the banded lighting crawl across
-      // the whole floor (the quantised bands jump with every small change in brightness).
-      const f = 0.95 + Math.sin(this.time * 1.3 + t.phase) * 0.03 + Math.sin(this.time * 2.1 + t.phase * 2) * 0.02;
-      t.light.intensity = t.base * f;
       // the flames themselves can dance: they're small and don't light anything
       t.flames.scale.set(1, 0.9 + Math.sin(this.time * 7 + t.phase) * 0.08, 1);
       t.flames.rotation.y += dt * 2;
     }
+    for (const light of this.torchPool) {
+      const t = light.userData.torch as Torch | undefined;
+      if (!t) continue;
+      // A slow, shallow breathing of the light. Fast flicker made the banded lighting crawl across
+      // the whole floor (the quantised bands jump with every small change in brightness).
+      light.intensity = t.base * (0.95 + Math.sin(this.time * 1.3 + t.phase) * 0.03 + Math.sin(this.time * 2.1 + t.phase * 2) * 0.02);
+    }
+    // the moon's shadow box follows the camera, so a big floor still gets crisp shadows near the action
+    this.moon.position.set(this.focus.x + 10, 18, this.focus.z + 4); this.moon.target.position.copy(this.focus).setY(0);
+    this.moon.target.updateMatrixWorld();
 
     // snap figures to whole pixels for the render (keeps sprites crisp while they move)
     const saved: [THREE.Group, THREE.Vector3][] = [];

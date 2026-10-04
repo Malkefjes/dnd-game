@@ -1,6 +1,7 @@
-// Game controller: player input → engine commands, engine events → animation,
-// and the AI's turns. The engine is authoritative; the view model (vm) mirrors
-// it event-by-event so the HUD and figures change exactly when animations do.
+// Combat view: one fight on the shared stage. Player input → engine commands, engine
+// events → animation, and the AI's turns. The engine is authoritative; the view model
+// (vm) mirrors it event-by-event so the HUD and figures change exactly when animations do.
+// The Game (game.ts) owns the stage, the input and exploration, and runs one of these per fight.
 import * as THREE from 'three';
 import { Combat, NeedsDecision, RuleError, type AttackPreview, type Command, type GameEvent, type ReactionPrompt } from '../engine/combat';
 import { TacticalAI } from '../engine/ai';
@@ -14,7 +15,6 @@ import {
 import { PixelRenderer } from '../render/pixel-renderer';
 import { Overlays } from '../render/overlays';
 import { Effects, SPELL_COLOR } from '../render/effects';
-import type { Archetype } from '../render/models';
 import { Hud, esc, hpBar, type HotbarState, type Slot } from '../ui/hud';
 
 type Mode =
@@ -40,9 +40,21 @@ type Plan =
   | { kind: 'info'; html: string; at: Pos }
   | { kind: 'invalid'; reason: string; at: Pos };
 
-interface VM { hp: number; pos: Pos; conds: Set<string>; dead: boolean }
+/** What the screen shows for a creature, updated as animations play. */
+export interface VM { name: string; side: 'party' | 'enemy'; hp: number; maxHp: number; pos: Pos; conds: Set<string>; dead: boolean }
 
-const CONDITION_ICON: Record<string, string> = {
+/** Everything a fight draws on, owned by the Game and shared between fights. */
+export interface Stage {
+  r: PixelRenderer;
+  hud: Hud;
+  ov: Overlays;
+  fx: Effects;
+  vm: Map<string, VM>;
+  portraits: Record<string, string>;
+  mouse: { x: number; y: number; dirty: boolean };
+}
+
+export const CONDITION_ICON: Record<string, string> = {
   hidden: '👁', prone: '⤵', dodging: '🛡', sapped: '⇩', slowed: '🐌', disengaged: '↯', stable: '✚', vexing: '',
   incapacitated: 'z', blessed: '✦', shieldOfFaith: '⛨', shielded: '◈', guided: '✧', chilled: '❄', steadyAim: '◎', aided: '♥',
 };
@@ -52,54 +64,71 @@ const CONDITION_NAME: Record<string, string> = {
 };
 const ORDINAL = ['', '1st', '2nd', '3rd', '4th', '5th'];
 
-export class GameController {
+export class CombatView {
   readonly combat: Combat;
   readonly r: PixelRenderer;
   readonly hud: Hud;
   private ai: TacticalAI;
   private ov: Overlays;
   private fx: Effects;
-  private vm = new Map<string, VM>();
+  private vm: Map<string, VM>;
   private mode: Mode = { kind: 'default' };
   private busy = true;
-  private mouse = { x: -1, y: -1, dirty: false };
+  private mouse: Stage['mouse'];
   private plan: Plan | null = null;
-  private portraits: Record<string, string> = {};
   private activeId = '';
   private round = 1;
-  private keys = new Set<string>();
 
-  /** Load the assets, build the scene and HUD. */
-  static async create(container: HTMLElement, rows: string[], combat: Combat, restart: () => void, onProgress?: (done: number, total: number) => void) {
-    const r = await PixelRenderer.create(container, rows, onProgress);
-    return new GameController(r, combat, restart);
-  }
-
-  private constructor(r: PixelRenderer, combat: Combat, private restart: () => void) {
+  /** `onEnd` runs once the fight is decided (after the last animation). */
+  constructor(stage: Stage, combat: Combat, private onEnd: (winner: 'party' | 'enemy') => void) {
     this.combat = combat;
-    this.r = r;
-    this.ov = new Overlays(this.r);
-    this.fx = new Effects(this.r);
+    this.r = stage.r; this.hud = stage.hud; this.ov = stage.ov; this.fx = stage.fx;
+    this.vm = stage.vm; this.mouse = stage.mouse;
     this.ai = new TacticalAI(combat);
+    // creatures joining the fight start with clean slates on screen
     for (const c of combat.creatures) {
-      const enemy = combat.enemiesOf(c)[0];
-      const facing = enemy ? Math.atan2(enemy.pos.y - c.pos.y, enemy.pos.x - c.pos.x) : 0;
-      this.r.addFigure(c.id, (c.model ?? 'goblin') as Archetype, c.side, c.pos.x, c.pos.y, facing);
-      this.vm.set(c.id, { hp: c.hp, pos: { ...c.pos }, conds: new Set(), dead: false });
+      const v = this.vm.get(c.id);
+      if (v) { v.hp = c.hp; v.maxHp = c.maxHp; v.pos = { ...c.pos }; v.conds = new Set(c.conditions.map((k) => k.id)); }
     }
-    this.portraits = this.r.renderPortraits();
-    this.hud = new Hud((id) => this.portraits[id]);
-    this.hud.onSlot = (k) => this.onSlot(k);
-    this.hud.onEndTurn = () => this.endTurn();
-    this.hud.onPartyClick = (id) => { const v = this.vm.get(id)!; this.r.lookAt(v.pos.x, v.pos.y); };
-    this.bindInput();
-    this.r.onUpdate((dt) => this.tick(dt));
-    const party = combat.creatures.filter((c) => c.side === 'party');
-    const cx = party.reduce((s, c) => s + c.pos.x, 0) / party.length, cy = party.reduce((s, c) => s + c.pos.y, 0) / party.length;
-    this.r.lookAt(cx + 2, cy - 2, true);
-    this.r.start();
-    this.refreshHud();
   }
+
+  /** Input from the Game while this fight is on. */
+  handleClick() {
+    if (this.busy || !this.isPlayerTurn()) return;
+    this.updateHover();
+    const p = this.plan;
+    if (!p) return;
+    if (p.kind === 'cast' && !p.complete && this.mode.kind === 'spell') {
+      // multi-target spell: this click only picks a target
+      this.mode = { ...this.mode, targets: p.targets.map((t) => t.id) };
+      this.refreshHotbar(); this.mouse.dirty = true;
+      return;
+    }
+    if (p.kind === 'move' || p.kind === 'attack' || p.kind === 'shove' || p.kind === 'potion' || p.kind === 'help' || p.kind === 'cast' || p.kind === 'summonAttack') this.execPlan(p);
+  }
+
+  handleKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') this.cancelMode();
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      // with darts / rays / blessings picked, Space casts; otherwise it ends the turn
+      if (this.mode.kind === 'spell' && this.mode.targets.length) this.onSlot('castNow'); else this.endTurn();
+    }
+    const n = e.code.startsWith('Digit') ? (Number(e.code.slice(5)) + 9) % 10 : -1;
+    if (n >= 0) {
+      const slots = e.shiftKey ? this.spellSlots() : this.slots();
+      if (slots[n] && slots[n].enabled) this.onSlot(slots[n].key);
+    }
+  }
+
+  handleCancel() { this.cancelMode(); }
+  handleLeave() { this.ov.clearPlanning(); this.hud.tooltip(null); this.hud.cursorTag(null); }
+  handleSlot(k: string) { this.onSlot(k); }
+  handleEndTurn() { this.endTurn(); }
+  handlePartyClick(id: string) { const v = this.vm.get(id)!; this.r.lookAt(v.pos.x, v.pos.y); }
+
+  /** Called every frame by the Game. */
+  update() { if (this.mouse.dirty && this.mouse.x >= 0) this.updateHover(); }
 
   // ------------------------------------------------------------ flow
 
@@ -116,7 +145,7 @@ export class GameController {
 
   private async continueFlow() {
     for (;;) {
-      if (this.combat.over) { this.busy = true; this.refreshHud(); this.showEnd(this.combat.over); return; }
+      if (this.combat.over) { this.busy = true; this.refreshHud(); this.finish(this.combat.over); return; }
       const a = this.combat.active!;
       if (a.controller === 'ai') {
         this.busy = true;
@@ -511,74 +540,7 @@ export class GameController {
 
   // ------------------------------------------------------------ input
 
-  private bindInput() {
-    const cv = this.r.renderer.domElement;
-    cv.addEventListener('mousemove', (e) => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; this.mouse.dirty = true; });
-    cv.addEventListener('mouseleave', () => { this.mouse.x = -1; this.ov.clearPlanning(); this.hud.tooltip(null); this.hud.cursorTag(null); });
-    cv.addEventListener('click', () => {
-      if (this.busy || !this.isPlayerTurn()) return;
-      this.updateHover();
-      const p = this.plan;
-      if (!p) return;
-      if (p.kind === 'cast' && !p.complete && this.mode.kind === 'spell') {
-        // multi-target spell: this click only picks a target
-        this.mode = { ...this.mode, targets: p.targets.map((t) => t.id) };
-        this.refreshHotbar(); this.mouse.dirty = true;
-        return;
-      }
-      if (p.kind === 'move' || p.kind === 'attack' || p.kind === 'shove' || p.kind === 'potion' || p.kind === 'help' || p.kind === 'cast' || p.kind === 'summonAttack') this.execPlan(p);
-    });
-    cv.addEventListener('contextmenu', (e) => { e.preventDefault(); this.cancelMode(); });
-    cv.addEventListener('wheel', (e) => { e.preventDefault(); this.r.setZoom(this.r.zoom * (e.deltaY > 0 ? 1.12 : 1 / 1.12)); this.mouse.dirty = true; }, { passive: false });
-    // drag with the middle or right mouse button to pan
-    let drag: { x: number; y: number } | null = null;
-    cv.addEventListener('mousedown', (e) => { if (e.button === 1 || e.button === 2) drag = { x: e.clientX, y: e.clientY }; });
-    addEventListener('mouseup', () => { drag = null; });
-    addEventListener('mousemove', (e) => {
-      if (!drag) return;
-      const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag = { x: e.clientX, y: e.clientY };
-      const s = (this.r.zoom * 2) / innerHeight;
-      // screen right = world (+1, 0, -1)/√2, screen down ≈ world (+1, 0, +1)
-      this.r.pan((-dx * s) / Math.SQRT2 - (dy * s) / Math.SQRT2 * 1.4, (dx * s) / Math.SQRT2 - (dy * s) / Math.SQRT2 * 1.4);
-    });
-    addEventListener('keydown', (e) => {
-      if (e.target instanceof HTMLInputElement) return;
-      this.keys.add(e.key.toLowerCase());
-      if (e.key === 'Escape') this.cancelMode();
-      if (e.key === ' ' || e.key === 'Enter') {
-        e.preventDefault();
-        // with darts / rays / blessings picked, Space casts; otherwise it ends the turn
-        if (this.mode.kind === 'spell' && this.mode.targets.length) this.onSlot('castNow'); else this.endTurn();
-      }
-      const n = e.code.startsWith('Digit') ? (Number(e.code.slice(5)) + 9) % 10 : -1;
-      if (n >= 0) {
-        const slots = e.shiftKey ? this.spellSlots() : this.slots();
-        if (slots[n] && slots[n].enabled) this.onSlot(slots[n].key);
-      }
-    });
-    addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
-  }
-
   private cancelMode() { this.mode = { kind: 'default' }; this.refreshHotbar(); this.mouse.dirty = true; }
-
-  private tick(dt: number) {
-    // keyboard panning (screen-relative)
-    const k = this.keys; let sx = 0, sy = 0;
-    if (k.has('a') || k.has('arrowleft')) sx -= 1; if (k.has('d') || k.has('arrowright')) sx += 1;
-    if (k.has('w') || k.has('arrowup')) sy -= 1; if (k.has('s') || k.has('arrowdown')) sy += 1;
-    if (sx || sy) { const sp = dt * 8; this.r.pan((sx + sy) * sp * 0.7, (-sx + sy) * sp * 0.7); this.mouse.dirty = true; }
-    if (this.mouse.dirty && this.mouse.x >= 0) this.updateHover();
-    // nameplates follow their figures
-    for (const c of this.combat.creatures) {
-      const v = this.vm.get(c.id)!;
-      const fig = this.r.figures.get(c.id)!;
-      const hiddenEnemy = c.side === 'enemy' && v.conds.has('hidden');
-      const p = this.r.projectHead(c.id, 0.18);
-      let icons = [...v.conds].map((x) => CONDITION_ICON[x] ?? '').join('');
-      if (v.conds.has('unconscious') && v.hp > 0) icons = `Zz${icons}`;
-      this.hud.plate(c.id, c.side, p.x, p.y, v.hp / c.maxHp, icons, !v.dead && !hiddenEnemy && fig.group.visible);
-    }
-  }
 
   // ------------------------------------------------------------ hotbar
 
@@ -1051,15 +1013,14 @@ export class GameController {
 
   // ------------------------------------------------------------ end
 
-  private showEnd(winner: 'party' | 'enemy') {
-    for (const c of this.combat.creatures) if (c.side === winner && this.combat.isConscious(c)) this.r.figures.get(c.id)!.character.once('Cheer', { hold: true });
-    const party = this.combat.creatures.filter((c) => c.side === 'party');
-    const standing = party.filter((c) => this.combat.isConscious(c)).map((c) => c.name);
-    const rounds = this.round;
-    const html = winner === 'party'
-      ? `<h2>Victory</h2><h1>The Den is Cleared</h1><p>Grukk's war band lies broken after ${rounds} round${rounds > 1 ? 's' : ''}. ${standing.length === party.length ? 'The whole party is still standing.' : `${listNames(standing)} ${standing.length > 1 ? 'stand' : 'stands'} among the bodies.`}</p>`
-      : `<h2>Defeat</h2><h1>The Goblins Feast</h1><p>${listNames(party.map((c) => c.name))} fall in the goblin den after ${rounds} round${rounds > 1 ? 's' : ''}. Grukk will be telling this story for years.</p>`;
-    setTimeout(() => this.hud.modal(html, [{ label: 'Play Again', onClick: () => this.restart() }]), 900);
+  /** The fight is decided: the winners cheer, the HUD clears and the Game takes over. */
+  private async finish(winner: 'party' | 'enemy') {
+    for (const c of this.combat.creatures) if (c.side === winner && this.combat.isConscious(c)) this.r.figures.get(c.id)?.character.once('Cheer', { speed: 1.1 });
+    this.ov.clearPlanning(); this.ov.setReach([]); this.ov.setActive(null);
+    this.hud.tooltip(null); this.hud.cursorTag(null);
+    this.hud.banner(winner === 'party' ? 'Victory' : 'The party has fallen', winner !== 'party');
+    await this.r.wait(1.4);
+    this.onEnd(winner);
   }
 }
 
@@ -1073,10 +1034,6 @@ const MASTERY_TEXT: Record<string, string> = {
   graze: 'Graze: on a miss, you still deal damage equal to your ability modifier.',
   cleave: 'Cleave: on a hit, attack a second creature next to the first.',
 };
-
-function listNames(names: string[]): string {
-  return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-}
 
 function formatDmg(a: AttackProfile): string {
   const t = a.damage.terms.map((x) => `${x.count}d${x.sides}`).join('+');

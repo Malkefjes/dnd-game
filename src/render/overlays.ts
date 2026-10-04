@@ -11,12 +11,13 @@ export class Overlays {
   private path = new THREE.Group();
   private marks = new THREE.Group();
   private areaG = new THREE.Group();
+  private markerG = new THREE.Group();
   private activeRing: THREE.Mesh;
   private hover: THREE.Mesh;
   private time = 0;
 
   constructor(private r: PixelRenderer) {
-    r.overlay.add(this.reach, this.path, this.marks, this.areaG);
+    r.overlay.add(this.reach, this.path, this.marks, this.areaG, this.markerG);
     this.activeRing = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.5, 40), additive(0xffd66b));
     this.activeRing.rotation.x = -Math.PI / 2; this.activeRing.visible = false;
     this.hover = new THREE.Mesh(new THREE.RingGeometry(0.38, 0.47, 4, 1), additive(0xffffff, 0.55));
@@ -26,6 +27,7 @@ export class Overlays {
       this.time += dt;
       const k = 0.75 + Math.sin(this.time * 4) * 0.25;
       (this.activeRing.material as THREE.MeshBasicMaterial).opacity = k;
+      this.markerG.children.forEach((m, i) => { m.position.y = m.userData.y + Math.sin(this.time * 2 + i) * 0.06; m.rotation.y += dt * 1.5; });
     });
   }
 
@@ -121,6 +123,19 @@ export class Overlays {
   setHover(p: P | null) {
     this.hover.visible = !!p;
     if (p) this.hover.position.set(p.x, this.y(p.x, p.y) + 0.006, p.y);
+  }
+
+  /** Floating markers over things to interact with (unread notes: gold, stairs: blue). */
+  setMarkers(list: { at: P; kind: 'note' | 'stairs' | 'rest' }[]) {
+    this.markerG.clear();
+    const colors = { note: 0xffd66b, stairs: 0x8fd0ff, rest: 0x9fffb0 };
+    for (const m of list) {
+      const d = new THREE.Mesh(new THREE.OctahedronGeometry(0.12, 0), additive(colors[m.kind], 0.95));
+      d.scale.y = 1.6;
+      d.userData.y = this.y(m.at.x, m.at.y) + 1.05;
+      d.position.set(m.at.x, d.userData.y, m.at.y);
+      this.markerG.add(d);
+    }
   }
 
   clearPlanning() { this.setPath(null); this.setTarget(null); this.setHover(null); this.setArea(null); }
