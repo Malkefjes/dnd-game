@@ -17,6 +17,8 @@ const POST_FRAG = /* glsl */ `
   uniform sampler2D tColor; uniform sampler2D tDepth; uniform sampler2D tNormal; uniform vec2 res;
   uniform float exposure; uniform float levels; uniform float bands; uniform float depthRange; uniform float outlineDepth;
   uniform vec3 lightView;
+  // the camera's position in whole screen pixels: keeps the dither pattern fixed to the world while panning
+  uniform vec2 ditherOrigin;
   in vec2 vUv; out vec4 fragColor;
   vec3 aces(vec3 x) { const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14; return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0); }
   float bayer(vec2 p) {
@@ -48,14 +50,14 @@ const POST_FRAG = /* glsl */ `
     col = aces(col * exposure);
     // banded light falloff: quantise brightness, keep hue
     float L = dot(col, vec3(0.299, 0.587, 0.114));
-    float Lq = floor(L * bands + bayer(gl_FragCoord.xy) * 0.45 + 0.5) / bands;
+    float Lq = floor(L * bands + bayer(gl_FragCoord.xy + ditherOrigin) * 0.45 + 0.5) / bands;
     col = mix(col, col * (Lq + 0.004) / (L + 0.004), 0.55);
     // shadows lean cool, highlights stay warm
     col = mix(col * vec3(0.8, 0.85, 1.15), col, smoothstep(0.04, 0.4, L));
     col = pow(col, vec3(1.0 / 2.2));
     col = mix(col, col * vec3(0.3, 0.24, 0.32), edge * 0.85);
     col = mix(col, col * 1.32 + vec3(0.025, 0.02, 0.0), crease * 0.65 * (1.0 - edge));
-    col += bayer(gl_FragCoord.xy) * 0.55 / levels;
+    col += bayer(gl_FragCoord.xy + ditherOrigin) * 0.55 / levels;
     col = floor(col * levels + 0.5) / levels;
     fragColor = vec4(col, 1.0);
   }
@@ -132,6 +134,7 @@ export class PixelRenderer {
         tColor: { value: null }, tDepth: { value: null }, tNormal: { value: null }, res: { value: new THREE.Vector2() },
         exposure: { value: 1.05 }, levels: { value: 24 }, bands: { value: 7 }, depthRange: { value: 79.9 }, outlineDepth: { value: 0.3 },
         lightView: { value: new THREE.Vector3(-0.35, 0.85, 0.4).normalize() },
+        ditherOrigin: { value: new THREE.Vector2() },
       },
     });
     this.postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.post));
@@ -347,6 +350,13 @@ export class PixelRenderer {
     Object.assign(this.camera, { left: -this.zoom * aspect, right: this.zoom * aspect, top: this.zoom, bottom: -this.zoom });
     this.camera.updateProjectionMatrix();
     const snapped = this.snap(this.focus);
+    // Panning moves the picture in whole pixels; move the dither pattern with it. A pattern fixed to the
+    // screen makes every dithered gradient flip as the floor slides under it, which reads as shaking.
+    const t = this.texel;
+    (this.post.uniforms.ditherOrigin.value as THREE.Vector2).set(
+      ((Math.round(this.focus.dot(this.camRight) / t) % 4) + 4) % 4,
+      ((Math.round(this.focus.dot(this.camUp) / t) % 4) + 4) % 4,
+    );
     this.camera.position.copy(snapped).addScaledVector(this.camDir, 30);
     this.camera.lookAt(snapped);
     this.camera.updateMatrixWorld();
