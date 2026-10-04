@@ -15,12 +15,17 @@ export class Rng {
   /** Integer in [1, sides]. */
   die(sides: number): number { return 1 + Math.floor(this.next() * sides); }
   get state(): number { return this.s; }
+  /** Snapshot / restore the generator (the game replays a command after a reaction prompt). */
+  save(): unknown { return this.s; }
+  load(state: unknown) { this.s = state as number; }
 }
 
 /** A queue of forced results, consumed before falling back to the real Rng. For tests. */
 export class RiggedRng extends Rng {
   constructor(private queue: number[], seed = 1) { super(seed); }
   push(...values: number[]) { this.queue.push(...values); }
+  override save(): unknown { return { s: super.save(), q: [...this.queue] }; }
+  override load(state: unknown) { const st = state as { s: unknown; q: number[] }; super.load(st.s); this.queue = [...st.q]; }
   override die(sides: number): number {
     const v = this.queue.shift();
     if (v === undefined) return super.die(sides);
@@ -99,13 +104,31 @@ export function rollD20(rng: Rng, mode: Advantage, rerollOnes = false): D20Roll 
 }
 
 /** Probability that d20 + mod >= target, accounting for nat 1 / nat 20 on attacks. */
-export function hitChance(mod: number, target: number, mode: Advantage, attack = true): number {
+export function hitChance(mod: number, target: number, mode: Advantage, attack = true, critOn = 20): number {
   let p = 0;
   for (let n = 1; n <= 20; n++) {
-    const success = attack ? n === 20 || (n !== 1 && n + mod >= target) : n + mod >= target;
+    const success = attack ? n >= critOn || (n !== 1 && n + mod >= target) : n + mod >= target;
     if (success) p += 1 / 20;
   }
   if (mode === 'advantage') return 1 - (1 - p) ** 2;
   if (mode === 'disadvantage') return p ** 2;
   return p;
+}
+
+/** hitChance with a bonus die added to the roll (Bless: +1d4). */
+export function hitChanceWithDie(mod: number, target: number, mode: Advantage, die: number, attack = true, critOn = 20): number {
+  if (!die) return hitChance(mod, target, mode, attack, critOn);
+  let p = 0;
+  for (let k = 1; k <= die; k++) p += hitChance(mod + k, target, mode, attack, critOn) / die;
+  return p;
+}
+
+/** Scale a dice expression: add `extra` copies of `per` (upcasting) and multiply the dice count (cantrips). */
+export function scaleDice(base: DiceExpr, opts: { per?: DiceExpr; extra?: number; multiply?: number } = {}): DiceExpr {
+  const terms = base.terms.map((t) => ({ ...t, count: t.count * (opts.multiply ?? 1) }));
+  if (opts.per && opts.extra) for (const t of opts.per.terms) {
+    const same = terms.find((x) => x.sides === t.sides);
+    if (same) same.count += t.count * opts.extra; else terms.push({ ...t, count: t.count * opts.extra });
+  }
+  return { terms, bonus: base.bonus + (opts.per?.bonus ?? 0) * (opts.extra ?? 0) };
 }

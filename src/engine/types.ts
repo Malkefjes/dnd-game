@@ -47,17 +47,25 @@ export interface AttackProfile {
   bonusOnAdvantage?: DiceExpr;
   /** Weapon attack (vs. a natural / special monster attack). */
   weapon: boolean;
+  /** Spell attack: the spell's id. */
+  spell?: string;
+  /** Cantrip (Potent Cantrip applies). */
+  cantrip?: boolean;
 }
 
 export type FeatureId =
   | 'secondWind' | 'actionSurge' | 'tacticalMind' | 'fightingStyleDefense' | 'weaponMastery'
   | 'sneakAttack' | 'cunningAction' | 'expertise'
   | 'savageAttacker' | 'alert' | 'luck' | 'brave' | 'halflingNimbleness' | 'naturallyStealthy' | 'dwarvenResilience' | 'darkvision'
-  | 'nimbleEscape' | 'redirectAttack';
+  | 'nimbleEscape' | 'redirectAttack'
+  // Milestone 2: casters and level 3 subclasses
+  | 'spellcasting' | 'channelDivinity' | 'discipleOfLife' | 'potentCantrip' | 'tough' | 'feyAncestry' | 'keenSenses' | 'trance'
+  | 'improvedCritical' | 'remarkableAthlete' | 'steadyAim' | 'assassinate';
 
 export type ConditionId =
   | 'prone' | 'unconscious' | 'invisible' | 'hidden' | 'dodging' | 'disengaged'
-  | 'sapped' | 'vexing' | 'slowed' | 'stable' | 'dead';
+  | 'sapped' | 'vexing' | 'slowed' | 'stable' | 'dead'
+  | 'incapacitated' | 'blessed' | 'shieldOfFaith' | 'shielded' | 'guided' | 'chilled' | 'steadyAim' | 'aided';
 
 export interface Expiry {
   /** Whose turn boundary ends this effect. */
@@ -75,6 +83,10 @@ export interface Condition {
   /** Hidden: the Stealth total enemies must beat to find you. */
   value?: number;
   expires?: Expiry;
+  /** Sustained by this caster's concentration: ends when it does. */
+  conc?: string;
+  /** The spell that imposed it (Sleep tracks its two stages this way). */
+  spell?: string;
 }
 
 export interface TurnState {
@@ -89,6 +101,63 @@ export interface TurnState {
   offhandUsed: boolean;
   nickUsed: boolean;
   dashed: number;
+  /** Moved at least one square this turn (Steady Aim). */
+  moved: boolean;
+}
+
+// ---------------------------------------------------------------- spells
+
+export type SpellShape =
+  /** One creature. */
+  | { kind: 'single' }
+  /** Several targets: darts/rays may repeat a target, Bless-style picks are distinct. */
+  | { kind: 'multi'; count: number; perSlot: number; repeat: boolean }
+  /** Centred on a square within range; squares within `radius` ft by grid distance. */
+  | { kind: 'sphere'; radius: number }
+  /** From the caster towards a square. */
+  | { kind: 'cone'; length: number }
+  /** An unoccupied square you can see (Misty Step). */
+  | { kind: 'point' }
+  | { kind: 'self' }
+  /** Everyone of yours within `radius` ft of you (Preserve Life). */
+  | { kind: 'emanation'; radius: number };
+
+export interface SpellDef {
+  id: string;
+  name: string;
+  /** 0 = cantrip (or a Channel Divinity option when `uses` is set). */
+  level: number;
+  school: string;
+  time: 'action' | 'bonus' | 'reaction';
+  /** Feet. 0 = self, 5 = touch. */
+  range: number;
+  shape: SpellShape;
+  /** Who it can target / who an area harms. */
+  affects: 'enemy' | 'ally' | 'any';
+  concentration?: boolean;
+  attack?: 'melee' | 'ranged';
+  save?: Ability;
+  /** Half damage on a successful save. */
+  half?: boolean;
+  /** Ignores Half and Three-Quarters Cover (Sacred Flame). */
+  ignoresCover?: boolean;
+  damage?: { dice: string; type: DamageType; upcast?: string; addMod?: boolean };
+  heal?: { dice: string; upcast?: string; addMod?: boolean };
+  /** Spends this resource instead of a spell slot (Channel Divinity). */
+  uses?: string;
+  description: string;
+  icon: string;
+}
+
+export interface Spellcasting {
+  ability: Ability;
+  /** Spell save DC and spell attack bonus. */
+  dc: number;
+  attack: number;
+  /** Spell slots by level: slots[1] = 1st-level slots. */
+  slots: number[];
+  /** Prepared spells and cantrips (plus Channel Divinity options), in hotbar order. */
+  spells: SpellDef[];
 }
 
 export interface CreatureDef {
@@ -120,6 +189,9 @@ export interface CreatureDef {
   description?: string;
   /** Which 3D model the renderer uses. */
   model?: string;
+  spellcasting?: Spellcasting;
+  /** Creature type, for spells like Sleep (elves) or Hold Person (humanoids). */
+  type?: string;
 }
 
 export interface Creature extends CreatureDef {
@@ -133,4 +205,18 @@ export interface Creature extends CreatureDef {
   resourcesLeft: Record<string, number>;
   inv: Record<string, number>;
   deathSaves: { success: number; fail: number };
+  /** Spell slots left, by level. */
+  slotsLeft: number[];
+  /** The concentration spell this creature is maintaining. */
+  concentration: string | null;
+}
+
+/** A spell effect with a position on the map (Spiritual Weapon). Not a creature: it doesn't block movement. */
+export interface Summon {
+  id: string;
+  kind: 'spiritualWeapon';
+  owner: string;
+  pos: Pos;
+  /** Slot level it was cast with (damage scaling). */
+  slot: number;
 }

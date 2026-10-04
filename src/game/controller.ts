@@ -620,7 +620,7 @@ export class GameController {
       case 'action': {
         const ch = r.figures.get(e.id)!.character;
         if (e.target && e.target !== e.id) { const tv = this.vm.get(e.target)!; r.face(e.id, tv.pos.x, tv.pos.y); }
-        const anim = { shove: 'Unarmed_Melee_Attack_Punch_A', potion: 'Use_Item', secondWind: 'Use_Item', stabilize: 'Interact', dodge: 'Block', search: 'Interact', hide: '', dash: '', disengage: '' }[e.action];
+        const anim = { shove: 'Unarmed_Melee_Attack_Punch_A', potion: 'Use_Item', secondWind: 'Use_Item', stabilize: 'Interact', dodge: 'Block', search: 'Interact', hide: '', dash: '', disengage: '', steadyAim: '2H_Ranged_Aiming', wake: 'Interact' }[e.action];
         if (anim) { const play = ch.once(anim, { impactAt: 0.5, speed: 1.2 }); await play.impact; }
         return;
       }

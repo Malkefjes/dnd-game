@@ -1,8 +1,9 @@
 // The combat state machine. Pure logic: no rendering, no timers. Every command
 // returns the events it produced so a renderer can animate them in order.
-import { Rng, rollD20, rollDice, resolveAdvantage, hitChance, averageDice, parseDice, formatDice, type Advantage, type DiceExpr } from './dice';
+import { Rng, rollD20, rollDice, resolveAdvantage, hitChanceWithDie, averageDice, parseDice, formatDice, type Advantage, type DiceExpr } from './dice';
 import { Grid, distanceFt, samePos, posKey, computeCover, COVER_AC, coverAtLeast, type Pos, type Cover } from './grid';
-import { abilityMod, SIZE_RANK, SKILL_ABILITY, type Ability, type AttackProfile, type Condition, type ConditionId, type Creature, type CreatureDef, type Skill, type TurnState } from './types';
+import { abilityMod, SIZE_RANK, SKILL_ABILITY, type Ability, type AttackProfile, type Condition, type ConditionId, type Creature, type CreatureDef, type Skill, type Summon, type TurnState } from './types';
+import { castSpell, attackWithSummon, endConcentration, canCastShield, castShield, spellAttackRider, sleepEndOfTurn } from './spells';
 
 // ---------------------------------------------------------------- events
 
@@ -11,7 +12,7 @@ export type GameEvent =
   | { type: 'initiative'; order: { id: string; total: number }[] }
   | { type: 'turnStart'; id: string; round: number }
   | { type: 'move'; id: string; path: Pos[]; cost: number }
-  | { type: 'attack'; attacker: string; target: string; attack: string; d20: number[]; natural: number; total: number; ac: number; hit: boolean; crit: boolean; mode: Advantage; cover: Cover; opportunity?: boolean }
+  | { type: 'attack'; attacker: string; target: string; attack: string; d20: number[]; natural: number; total: number; ac: number; hit: boolean; crit: boolean; mode: Advantage; cover: Cover; opportunity?: boolean; spell?: string; summon?: string }
   | { type: 'damage'; target: string; amount: number; damageType: string; hp: number; parts: string[] }
   | { type: 'heal'; target: string; amount: number; hp: number }
   | { type: 'condition'; target: string; condition: ConditionId; added: boolean }
@@ -24,7 +25,17 @@ export type GameEvent =
   | { type: 'death'; id: string }
   | { type: 'resource'; id: string; resource: string; left: number }
   /** A non-attack action was taken (for flavour animation). */
-  | { type: 'action'; id: string; action: 'shove' | 'potion' | 'secondWind' | 'hide' | 'dodge' | 'stabilize' | 'dash' | 'disengage' | 'search'; target?: string }
+  | { type: 'action'; id: string; action: 'shove' | 'potion' | 'secondWind' | 'hide' | 'dodge' | 'stabilize' | 'dash' | 'disengage' | 'search' | 'steadyAim' | 'wake'; target?: string }
+  /** A spell (or Channel Divinity) is cast. `area` lists the squares of an area spell. */
+  | { type: 'cast'; actor: string; spell: string; slot: number; targets: string[]; point?: Pos; area?: Pos[]; reaction?: boolean }
+  /** An effect that always hits (a Magic Missile dart, a heal, a blessing landing). */
+  | { type: 'spellHit'; actor: string; target: string; spell: string }
+  | { type: 'concentration'; id: string; spell: string | null }
+  | { type: 'summon'; summon: Summon }
+  | { type: 'summonMove'; id: string; from: Pos; to: Pos }
+  | { type: 'unsummon'; id: string }
+  | { type: 'teleport'; id: string; from: Pos; to: Pos }
+  | { type: 'maxHp'; target: string; maxHp: number }
   | { type: 'combatEnd'; winner: 'party' | 'enemy' };
 
 // ---------------------------------------------------------------- commands
@@ -45,7 +56,29 @@ export type Command =
   | { type: 'potion'; actor: string; target: string }
   | { type: 'stabilize'; actor: string; target: string }
   | { type: 'standUp'; actor: string }
+  /** Cast a spell. `slot` is the slot level (0 for cantrips and Channel Divinity). */
+  | { type: 'cast'; actor: string; spell: string; slot: number; targets?: string[]; point?: Pos }
+  /** Spiritual Weapon: move it up to 20 ft and attack a creature within 5 ft of it (Bonus Action). */
+  | { type: 'summonAttack'; actor: string; summon: string; target: string }
+  | { type: 'steadyAim'; actor: string }
+  /** Shake a creature out of magical sleep (an action, within 5 ft). */
+  | { type: 'wake'; actor: string; target: string }
   | { type: 'endTurn'; actor: string };
+
+/** A decision a creature's controller must make mid-command. */
+export type ReactionPrompt =
+  | { kind: 'opportunity'; reactor: string; target: string }
+  | { kind: 'shield'; reactor: string; attacker: string; total: number; ac: number; wouldMiss: boolean };
+
+/**
+ * Thrown when `decide` returns undefined: a player has to choose. The command is
+ * abandoned half-way, so the caller restores a snapshot, asks, and replays the
+ * command with the answer (the seeded RNG makes the replay identical up to here).
+ * `events` are those emitted before the question, so the UI can show them first.
+ */
+export class NeedsDecision extends Error {
+  constructor(readonly prompt: ReactionPrompt, readonly events: GameEvent[]) { super(`decision needed: ${prompt.kind}`); }
+}
 
 export class RuleError extends Error {}
 
@@ -74,12 +107,19 @@ export class Combat {
   round = 0;
   turnIndex = -1;
   over: 'party' | 'enemy' | null = null;
-  /** Opportunity attacks by player characters are taken automatically. */
-  autoReactions = true;
+  /** Spell effects on the map (Spiritual Weapon). */
+  summons: Summon[] = [];
+  /**
+   * Who decides reactions. The default policy always takes Opportunity Attacks and
+   * casts Shield only when it turns a hit into a miss. The game UI replaces it and
+   * returns undefined for a player's creature, which raises NeedsDecision.
+   */
+  decide: (p: ReactionPrompt) => boolean | undefined = (p) => this.defaultReaction(p);
   private events: GameEvent[] = [];
   /** Increments every time any creature's turn starts; "once per turn" features key off it. */
-  private turnSerial = 0;
+  turnSerial = 0;
   private onceUsed = new Map<string, number>();
+  private summonSerial = 0;
 
   constructor(readonly grid: Grid, readonly rng: Rng) {}
 
@@ -90,6 +130,7 @@ export class Combat {
     const c: Creature = {
       ...def, hp: def.maxHp, pos: { ...pos }, initiative: 0, conditions: [], turnsStarted: 0,
       turn: freshTurn(def.speed), resourcesLeft: { ...(def.resources ?? {}) }, inv: { ...(def.inventory ?? {}) }, deathSaves: { success: 0, fail: 0 },
+      slotsLeft: [...(def.spellcasting?.slots ?? [])], concentration: null,
     };
     this.creatures.push(c);
     return c;
@@ -108,7 +149,9 @@ export class Combat {
     this.events = [];
     const rolls = this.creatures.map((c) => {
       const bonus = abilityMod(c.abilities.dex) + (this.has(c, 'alert') ? c.pb : 0);
-      const r = rollD20(this.rng, 'normal', this.has(c, 'luck'));
+      // Remarkable Athlete (Champion) and Assassinate (Assassin): Advantage on Initiative
+      const adv = this.has(c, 'remarkableAthlete') || this.has(c, 'assassinate');
+      const r = rollD20(this.rng, adv ? 'advantage' : 'normal', this.has(c, 'luck'));
       c.initiative = r.natural + bonus;
       return { c, total: c.initiative, tiebreak: c.abilities.dex + this.rng.next() };
     });
@@ -127,13 +170,21 @@ export class Combat {
   has(c: Creature, f: Creature['features'][number]): boolean { return c.features.includes(f); }
   cond(c: Creature, id: ConditionId): Condition | undefined { return c.conditions.find((x) => x.id === id); }
   isAlive(c: Creature): boolean { return !this.cond(c, 'dead'); }
-  isConscious(c: Creature): boolean { return this.isAlive(c) && c.hp > 0; }
-  /** Incapacitated: unconscious (the only incapacitating condition modelled so far) or dead. */
-  incapacitated(c: Creature): boolean { return !this.isConscious(c); }
+  /** Unconscious covers both dying (0 HP) and magical sleep. */
+  isConscious(c: Creature): boolean { return this.isAlive(c) && c.hp > 0 && !this.cond(c, 'unconscious'); }
+  /** Incapacitated: no actions, Bonus Actions or Reactions (also implied by Unconscious and death). */
+  incapacitated(c: Creature): boolean { return !this.isConscious(c) || !!this.cond(c, 'incapacitated'); }
+  /** Can take a reaction right now. */
+  canReact(c: Creature): boolean { return c.turn.reaction && !this.incapacitated(c); }
   enemiesOf(c: Creature): Creature[] { return this.creatures.filter((o) => o.side !== c.side && this.isAlive(o)); }
   alliesOf(c: Creature): Creature[] { return this.creatures.filter((o) => o.side === c.side && o.id !== c.id && this.isAlive(o)); }
   creatureAt(p: Pos): Creature | undefined { return this.creatures.find((c) => this.isAlive(c) && samePos(c.pos, p)); }
-  speedOf(c: Creature): number { return Math.max(0, c.speed - (this.cond(c, 'slowed') ? 10 : 0)); }
+  speedOf(c: Creature): number {
+    if (this.cond(c, 'steadyAim')) return 0;
+    return Math.max(0, c.speed - (this.cond(c, 'slowed') ? 10 : 0) - (this.cond(c, 'chilled') ? 10 : 0));
+  }
+  /** Armor Class including Shield (+5) and Shield of Faith (+2). */
+  acOf(c: Creature): number { return c.ac + (this.cond(c, 'shielded') ? 5 : 0) + (this.cond(c, 'shieldOfFaith') ? 2 : 0); }
   modOf(c: Creature, a: Ability): number { return abilityMod(c.abilities[a]); }
   skillMod(c: Creature, s: Skill): number { return c.skills[s] ?? this.modOf(c, SKILL_ABILITY[s]); }
   saveMod(c: Creature, a: Ability): number { return this.modOf(c, a) + (c.saveProfs.includes(a) ? c.pb : 0); }
@@ -205,7 +256,7 @@ export class Combat {
   private opportunityAttackers(c: Creature, a: Pos, b: Pos): Creature[] {
     if (this.cond(c, 'disengaged')) return [];
     return this.enemiesOf(c).filter((e) => {
-      if (!this.isConscious(e) || !e.turn.reaction || !this.canSee(e, c)) return false;
+      if (!this.canReact(e) || !this.canSee(e, c)) return false;
       const reach = this.meleeReach(e);
       if (reach === 0) return false;
       return distanceFt(e.pos, a) <= reach && distanceFt(e.pos, b) > reach;
@@ -230,8 +281,8 @@ export class Combat {
   }
 
   /** Work out advantage, cover, hit chance and expected damage for an attack — used by the rules, the UI and the AI. */
-  previewAttack(attacker: Creature, attackId: string, target: Creature, opts: { offhand?: boolean; opportunity?: boolean; from?: Pos } = {}): AttackPreview {
-    const atk = this.attackOf(attacker, attackId);
+  previewAttack(attacker: Creature, attackId: string | AttackProfile, target: Creature, opts: { offhand?: boolean; opportunity?: boolean; from?: Pos } = {}): AttackPreview {
+    const atk = typeof attackId === 'string' ? this.attackOf(attacker, attackId) : attackId;
     const from = opts.from ?? attacker.pos;
     const dist = distanceFt(from, target.pos);
     const adv: string[] = [], dis: string[] = [];
@@ -253,16 +304,21 @@ export class Combat {
     if (this.cond(target, 'prone')) (dist <= 5 ? adv : dis).push(dist <= 5 ? 'target prone' : 'target prone (far)');
     if (this.cond(target, 'unconscious')) adv.push('target unconscious');
     if (attacker.conditions.some((x) => x.id === 'vexing' && x.against === target.id)) adv.push('vex');
+    if (this.cond(target, 'guided')) adv.push('Guiding Bolt');
+    if (this.cond(attacker, 'steadyAim')) adv.push('Steady Aim');
+    if (this.has(attacker, 'assassinate') && this.round === 1 && target.turnsStarted === 0) adv.push('Assassinate');
     const mode = resolveAdvantage(adv.length, dis.length);
 
     const saved = attacker.pos;
     attacker.pos = from;
     const cover = this.coverBetween(attacker, target);
     attacker.pos = saved;
-    const ac = target.ac + (isFinite(COVER_AC[cover]) ? COVER_AC[cover] : 0);
+    const ac = this.acOf(target) + (isFinite(COVER_AC[cover]) ? COVER_AC[cover] : 0);
 
-    const chance = cover === 'total' || !inRange ? 0 : hitChance(atk.toHit, ac, mode);
-    const critChance = cover === 'total' || !inRange ? 0 : (this.autoCrit(attacker, target, from) ? chance : hitChance(atk.toHit, 99, mode));
+    const bless = this.cond(attacker, 'blessed') ? 4 : 0;
+    const critOn = this.critOn(attacker, atk);
+    const chance = cover === 'total' || !inRange ? 0 : hitChanceWithDie(atk.toHit, ac, mode, bless, true, critOn);
+    const critChance = cover === 'total' || !inRange ? 0 : (this.autoCrit(attacker, target, from) ? chance : hitChanceWithDie(atk.toHit, 99, mode, 0, true, critOn));
     const dmgExpr = opts.offhand ? (atk.offhandDamage ?? atk.damage) : atk.damage;
     const diceAvg = averageDice({ terms: dmgExpr.terms, bonus: 0 });
     let perHit = averageDice(dmgExpr);
@@ -272,13 +328,20 @@ export class Combat {
     if (atk.bonusOnAdvantage && mode === 'advantage') extraDice += averageDice(atk.bonusOnAdvantage);
     perHit += extraDice;
     const expected = Math.max(0, chance * perHit + critChance * (diceAvg + extraDice));
+    // Potent Cantrip: a missed cantrip still deals half damage
+    const potent = atk.cantrip && this.has(attacker, 'potentCantrip') ? (1 - chance) * Math.floor(averageDice(dmgExpr) / 2) : 0;
+    const expectedAll = expected + potent;
     const reasons = [...adv.map((r) => `+ ${r}`), ...dis.map((r) => `− ${r}`)];
+    if (bless) reasons.push('Bless +1d4');
     if (cover !== 'none') reasons.push(`${cover} cover`);
     if (sneak) reasons.push('Sneak Attack');
     let damageText = formatDice(dmgExpr);
     if (sneak) damageText += ` +${attacker.sneakAttackDice ?? 1}d6`;
-    return { attack: atk, mode, reasons, cover, ac, chance, expected, damageText, inRange, longRange, usesBonusAction: !!opts.offhand };
+    return { attack: atk, mode, reasons, cover, ac, chance, expected: expectedAll, damageText, inRange, longRange, usesBonusAction: !!opts.offhand };
   }
+
+  /** Lowest natural d20 that crits: Improved Critical (Champion) makes weapon attacks crit on 19–20. */
+  critOn(attacker: Creature, atk: AttackProfile): number { return this.has(attacker, 'improvedCritical') && atk.weapon ? 19 : 20; }
 
   private autoCrit(attacker: Creature, target: Creature, from: Pos): boolean {
     return !!this.cond(target, 'unconscious') && distanceFt(from, target.pos) <= 5 && attacker.id !== target.id;
@@ -286,7 +349,7 @@ export class Combat {
 
   private sneakAttackApplies(attacker: Creature, atk: AttackProfile, target: Creature, mode: Advantage, from: Pos): boolean {
     if (!this.has(attacker, 'sneakAttack') || this.usedThisTurn(attacker, 'sneakAttack')) return false;
-    if (!(atk.finesse || atk.kind === 'ranged') || mode === 'disadvantage') return false;
+    if (!atk.weapon || !(atk.finesse || atk.kind === 'ranged') || mode === 'disadvantage') return false;
     if (mode === 'advantage') return true;
     // an ally of yours (enemy of the target) within 5 ft of it, not incapacitated
     return this.alliesOf(attacker).some((a) => this.isConscious(a) && distanceFt(a.pos, target.pos) <= 5 && !samePos(a.pos, from));
@@ -303,6 +366,7 @@ export class Combat {
     const actor = this.get(cmd.actor);
     if (this.active?.id !== actor.id) throw new RuleError(`it is not ${actor.name}'s turn`);
     if (cmd.type !== 'endTurn' && !this.isConscious(actor)) throw new RuleError(`${actor.name} can't act`);
+    if (this.cond(actor, 'incapacitated') && cmd.type !== 'endTurn' && cmd.type !== 'move' && cmd.type !== 'standUp') throw new RuleError(`${actor.name} is Incapacitated`);
     switch (cmd.type) {
       case 'move': this.doMove(actor, cmd.to); break;
       case 'attack': this.doAttackAction(actor, cmd.attack, this.get(cmd.target)); break;
@@ -318,6 +382,10 @@ export class Combat {
       case 'potion': this.doPotion(actor, this.get(cmd.target)); break;
       case 'stabilize': this.doStabilize(actor, this.get(cmd.target)); break;
       case 'standUp': this.doStandUp(actor); break;
+      case 'cast': castSpell(this, actor, cmd); break;
+      case 'summonAttack': attackWithSummon(this, actor, cmd.summon, this.get(cmd.target)); break;
+      case 'steadyAim': this.doSteadyAim(actor); break;
+      case 'wake': this.doWake(actor, this.get(cmd.target)); break;
       case 'endTurn': this.advanceTurn(); break;
     }
     this.checkEnd();
@@ -349,12 +417,16 @@ export class Combat {
     c.turn = freshTurn(this.speedOf(c));
     this.expire(c.id, 'start');
     c.turn.movement = this.speedOf(c); // Slow from the previous round may have just expired
+    if (this.cond(c, 'incapacitated')) { c.turn.actions = 0; c.turn.bonusActions = 0; }
     this.emit({ type: 'turnStart', id: c.id, round: this.round });
     this.log(`${c.name}'s turn`, 'turn');
     if (c.hp === 0 && c.pc && this.isAlive(c) && !this.cond(c, 'stable')) this.deathSave(c);
   }
 
-  private endOfTurn(c: Creature) { this.expire(c.id, 'end'); }
+  private endOfTurn(c: Creature) {
+    this.expire(c.id, 'end');
+    sleepEndOfTurn(this, c);
+  }
 
   private expire(creatureId: string, when: 'start' | 'end') {
     for (const c of this.creatures) {
@@ -387,7 +459,7 @@ export class Combat {
 
   // ------------------------------------------------------------ economy
 
-  private spend(c: Creature, via: ActionSource, what: string) {
+  spend(c: Creature, via: ActionSource, what: string) {
     if (via === 'action') {
       if (c.turn.actions <= 0) throw new RuleError(`${c.name} has no action left for ${what}`);
       c.turn.actions--;
@@ -401,7 +473,7 @@ export class Combat {
     }
   }
 
-  private useBonus(c: Creature, what: string) {
+  useBonus(c: Creature, what: string) {
     if (c.turn.bonusActions <= 0) throw new RuleError(`${c.name} has already used their Bonus Action (${what})`);
     c.turn.bonusActions--;
   }
@@ -424,18 +496,19 @@ export class Combat {
       const occ = this.creatureAt(b);
       if (occ && occ.id !== c.id && !this.grid.cell(b.x, b.y)!.difficult) step += 5;
       if (step > c.turn.movement) break;
-      const provokers = this.opportunityAttackers(c, a, b).filter((e) => e.controller !== 'player' || this.autoReactions);
+      const provokers = this.opportunityAttackers(c, a, b);
       if (provokers.length) flushSeg();
       for (const e of provokers) {
         if (!this.isConscious(c)) break;
         const atk = this.bestMeleeAttack(e, c);
         if (!atk) continue;
+        if (!this.ask({ kind: 'opportunity', reactor: e.id, target: c.id })) continue;
         e.turn.reaction = false;
         this.log(`${c.name} provokes an Opportunity Attack from ${e.name}!`, 'bad');
         this.resolveAttack(e, atk.id, c, { opportunity: true });
       }
       if (!this.isConscious(c)) break;
-      c.pos = b; c.turn.movement -= step; segCost += step; walked.push(b); seg.push(b);
+      c.pos = b; c.turn.movement -= step; c.turn.moved = true; segCost += step; walked.push(b); seg.push(b);
       this.revealCheck();
     }
     // an interrupted move can't leave a creature inside another one's space: step back
@@ -495,10 +568,11 @@ export class Combat {
   }
 
   /** Roll an attack and apply everything that follows from it. */
-  private resolveAttack(attacker: Creature, attackId: string, target: Creature, opts: { offhand?: boolean; opportunity?: boolean } = {}) {
-    let atk = this.attackOf(attacker, attackId);
+  resolveAttack(attacker: Creature, attackId: string | AttackProfile, target: Creature, opts: { offhand?: boolean; opportunity?: boolean; from?: Pos; summon?: string } = {}) {
+    let atk = typeof attackId === 'string' ? this.attackOf(attacker, attackId) : attackId;
+    const from = opts.from ?? attacker.pos;
     // Goblin Boss: Redirect Attack — swap with an adjacent ally who becomes the target
-    if (this.has(target, 'redirectAttack') && target.turn.reaction && this.isConscious(target) && this.canSee(target, attacker)) {
+    if (this.has(target, 'redirectAttack') && this.canReact(target) && this.canSee(target, attacker)) {
       const ally = this.alliesOf(target).find((a) => this.isConscious(a) && distanceFt(a.pos, target.pos) <= 5 && (a.size === 'small' || a.size === 'medium'));
       if (ally) {
         target.turn.reaction = false;
@@ -507,26 +581,46 @@ export class Combat {
         this.log(`${target.name} yanks ${ally.name} into the way!`, 'bad');
         target = ally;
         // the swap may have put the new target out of reach
-        if (!this.previewAttack(attacker, atk.id, target).inRange) { this.log(`The attack can't reach ${target.name}.`); return; }
+        if (!this.previewAttack(attacker, atk, target, { from }).inRange) { this.log(`The attack can't reach ${target.name}.`); return; }
       }
     }
-    const p = this.previewAttack(attacker, attackId, target, opts);
+    const p = this.previewAttack(attacker, atk, target, { ...opts, from });
     atk = p.attack;
     if (atk.consumes) attacker.inv[atk.consumes] = Math.max(0, (attacker.inv[atk.consumes] ?? 0) - 1);
     // attacking reveals a hidden attacker (after the roll benefits from it)
     const d20 = rollD20(this.rng, p.mode, this.has(attacker, 'luck'));
-    const total = d20.natural + atk.toHit;
-    const hit = d20.natural === 20 || (d20.natural !== 1 && total >= p.ac);
-    const crit = hit && (d20.natural === 20 || this.autoCrit(attacker, target, attacker.pos));
-    this.emit({ type: 'attack', attacker: attacker.id, target: target.id, attack: atk.id, d20: d20.rolls, natural: d20.natural, total, ac: p.ac, hit, crit, mode: p.mode, cover: p.cover, opportunity: opts.opportunity });
+    // Bless: +1d4, rolled after the d20
+    const blessDie = this.cond(attacker, 'blessed') ? this.rng.die(4) : 0;
+    const total = d20.natural + atk.toHit + blessDie;
+    const critOn = this.critOn(attacker, atk);
+    let ac = p.ac;
+    let hit = d20.natural >= critOn || (d20.natural !== 1 && total >= ac);
+    // Shield: a reaction that can turn the hit into a miss (not a critical hit)
+    if (hit && d20.natural < critOn && canCastShield(this, target)) {
+      const wouldMiss = total < ac + 5;
+      if (this.ask({ kind: 'shield', reactor: target.id, attacker: attacker.id, total, ac, wouldMiss })) {
+        castShield(this, target);
+        ac += 5;
+        hit = total >= ac;
+      }
+    }
+    const crit = hit && (d20.natural >= critOn || this.autoCrit(attacker, target, from));
+    this.emit({ type: 'attack', attacker: attacker.id, target: target.id, attack: atk.id, d20: d20.rolls, natural: d20.natural, total, ac, hit, crit, mode: p.mode, cover: p.cover, opportunity: opts.opportunity, spell: atk.spell, summon: opts.summon });
     const modeText = p.mode === 'normal' ? '' : ` with ${p.mode === 'advantage' ? 'Advantage' : 'Disadvantage'} (${d20.rolls.join(', ')})`;
-    this.log(`${attacker.name} ${opts.opportunity ? 'lashes out at' : 'attacks'} ${target.name} with ${atk.name}${modeText}: ${total} vs AC ${p.ac} — ${crit ? 'CRITICAL HIT!' : hit ? 'hit' : 'miss'}.`, hit ? (attacker.side === 'party' ? 'good' : 'bad') : 'info');
+    this.log(`${attacker.name} ${opts.opportunity ? 'lashes out at' : 'attacks'} ${target.name} with ${atk.name}${modeText}: ${total}${blessDie ? ` (Bless +${blessDie})` : ''} vs AC ${ac} — ${crit ? 'CRITICAL HIT!' : hit ? 'hit' : 'miss'}.`, hit ? (attacker.side === 'party' ? 'good' : 'bad') : 'info');
     this.removeCondition(attacker, 'sapped');
+    this.removeCondition(attacker, 'steadyAim');
+    this.removeCondition(target, 'guided');
     attacker.conditions = attacker.conditions.filter((x) => !(x.id === 'vexing' && x.against === target.id));
     if (this.cond(attacker, 'hidden')) { this.removeCondition(attacker, 'hidden'); this.log(`${attacker.name} is no longer hidden.`); }
 
     if (!hit) {
       if (atk.mastery === 'graze' && atk.abilityMod > 0) this.applyDamage(target, atk.abilityMod, atk.damageType, ['Graze'], attacker);
+      // Potent Cantrip (Evoker): half the cantrip's damage on a miss, no other effect
+      if (atk.cantrip && this.has(attacker, 'potentCantrip')) {
+        const half = Math.floor(rollDice(this.rng, atk.damage).total / 2);
+        if (half > 0) this.applyDamage(target, half, atk.damageType, ['Potent Cantrip'], attacker);
+      }
       return;
     }
     // damage
@@ -542,12 +636,15 @@ export class Combat {
     let amount = dice.total + base.bonus;
     const extra = (d: DiceExpr, label: string) => { const r = rollDice(this.rng, d, crit); amount += r.total; parts.push(`${label} ${r.total}`); };
     if (atk.bonusOnAdvantage && p.mode === 'advantage') extra(atk.bonusOnAdvantage, 'advantage bonus');
-    if (this.sneakAttackApplies(attacker, atk, target, p.mode, attacker.pos)) {
+    if (this.sneakAttackApplies(attacker, atk, target, p.mode, from)) {
       this.markUsed(attacker, 'sneakAttack');
       extra({ terms: [{ count: attacker.sneakAttackDice ?? 1, sides: 6 }], bonus: 0 }, 'Sneak Attack');
+      // Assassinate: a first-round Sneak Attack adds the rogue's level as extra damage
+      if (this.has(attacker, 'assassinate') && this.round === 1) { amount += attacker.level ?? 0; parts.push(`Assassinate ${attacker.level ?? 0}`); }
     }
     this.applyDamage(target, Math.max(1, amount), atk.damageType, parts, attacker, crit);
     if (this.isAlive(target)) this.applyMastery(attacker, atk, target);
+    if (atk.spell && this.isAlive(target)) spellAttackRider(this, attacker, atk.spell, target);
   }
 
   private applyMastery(attacker: Creature, atk: AttackProfile, target: Creature) {
@@ -601,7 +698,8 @@ export class Combat {
     }
     if (ability === 'dex' && this.cond(c, 'dodging')) mode = mode === 'disadvantage' ? 'normal' : 'advantage';
     const r = rollD20(this.rng, mode, this.has(c, 'luck'));
-    const total = r.natural + this.saveMod(c, ability);
+    const bless = this.cond(c, 'blessed') ? this.rng.die(4) : 0;
+    const total = r.natural + this.saveMod(c, ability) + bless;
     const success = total >= dc;
     this.emit({ type: 'save', target: c.id, ability, natural: r.natural, total, dc, success });
     this.log(`${c.name} ${ability.toUpperCase()} save: ${total} vs DC ${dc} — ${success ? 'success' : 'failure'}.`);
@@ -633,11 +731,22 @@ export class Combat {
     target.hp = Math.max(0, target.hp - amount);
     this.emit({ type: 'damage', target: target.id, amount, damageType, hp: target.hp, parts });
     this.log(`${target.name} takes ${amount} ${damageType} damage${parts.length ? ` (${parts.join(', ')})` : ''}. ${target.hp}/${target.maxHp} HP.`, target.side === 'party' ? 'bad' : 'good');
+    // damage ends magical sleep
+    if (target.hp > 0 && target.conditions.some((k) => k.spell === 'sleep')) {
+      for (const k of target.conditions.filter((x) => x.spell === 'sleep')) this.removeCondition(target, k.id);
+      this.log(`${target.name} wakes up!`, target.side === 'party' ? 'good' : 'bad');
+    }
+    // concentration: Constitution save, DC 10 or half the damage (max 30)
+    if (target.hp > 0 && target.concentration) {
+      const dc = Math.min(30, Math.max(10, Math.floor(amount / 2)));
+      if (!this.savingThrow(target, 'con', dc)) endConcentration(this, target, 'loses concentration');
+    }
     if (target.hp === 0) {
       const overflow = amount - before;
       if (!target.pc) { this.kill(target, source); return; }
       if (overflow >= target.maxHp) { this.kill(target); return; }
       target.deathSaves = { success: 0, fail: 0 };
+      if (target.conditions.some((k) => k.spell === 'sleep')) for (const k of target.conditions.filter((x) => x.spell === 'sleep')) this.removeCondition(target, k.id);
       this.addCondition(target, { id: 'unconscious' });
       if (!this.cond(target, 'prone')) this.addCondition(target, { id: 'prone' });
       target.conditions = target.conditions.filter((c) => c.id !== 'hidden' && c.id !== 'dodging');
@@ -647,6 +756,7 @@ export class Combat {
   }
 
   private kill(c: Creature, by?: Creature) {
+    if (c.concentration) endConcentration(this, c);
     c.hp = 0;
     c.conditions = [{ id: 'dead' }];
     this.emit({ type: 'death', id: c.id });
@@ -703,7 +813,7 @@ export class Combat {
   }
 
   /** Hidden creatures are found as soon as an enemy has a clear view of them. */
-  private revealCheck() {
+  revealCheck() {
     for (const c of this.creatures) {
       if (!this.cond(c, 'hidden')) continue;
       const spotter = this.hideBlockers(c)[0];
@@ -799,11 +909,72 @@ export class Combat {
     this.log(`${c.name} stands up.`);
   }
 
+  /** Steady Aim (Rogue 3): Bonus Action, only if you haven't moved; Advantage on your next attack, Speed 0 this turn. */
+  private doSteadyAim(c: Creature) {
+    if (!this.has(c, 'steadyAim')) throw new RuleError(`${c.name} can't use Steady Aim`);
+    if (c.turn.moved) throw new RuleError('Steady Aim only works if you haven\'t moved this turn');
+    this.useBonus(c, 'Steady Aim');
+    this.addCondition(c, { id: 'steadyAim', expires: { creature: c.id, when: 'end', turn: c.turnsStarted } });
+    c.turn.movement = 0;
+    this.emit({ type: 'action', id: c.id, action: 'steadyAim' });
+    this.log(`${c.name} takes careful aim.`);
+  }
+
+  /** Sleep: "someone within 5 feet of it takes an action to shake it out of the spell's effect". */
+  private doWake(c: Creature, target: Creature) {
+    if (distanceFt(c.pos, target.pos) > 5) throw new RuleError(`${target.name} is too far away`);
+    if (!target.conditions.some((k) => k.spell === 'sleep')) throw new RuleError(`${target.name} isn't under a sleep spell`);
+    this.spend(c, 'action', 'wake');
+    this.emit({ type: 'action', id: c.id, action: 'wake', target: target.id });
+    for (const k of target.conditions.filter((x) => x.spell === 'sleep')) this.removeCondition(target, k.id);
+    this.log(`${c.name} shakes ${target.name} awake.`, c.side === 'party' ? 'good' : 'bad');
+  }
+
+  // ------------------------------------------------------------ reactions & replay
+
+  /** Ask whoever controls the reactor. Undefined means "a player must choose": abandon the command. */
+  ask(p: ReactionPrompt): boolean {
+    const answer = this.decide(p);
+    if (answer === undefined) throw new NeedsDecision(p, [...this.events]);
+    return answer;
+  }
+
+  defaultReaction(p: ReactionPrompt): boolean {
+    if (p.kind === 'shield') return p.wouldMiss;
+    return true;
+  }
+
+  /** Everything needed to rewind a command (see NeedsDecision). */
+  snapshot(): unknown {
+    return structuredClone({
+      creatures: this.creatures, round: this.round, turnIndex: this.turnIndex, over: this.over, turnSerial: this.turnSerial,
+      onceUsed: [...this.onceUsed], summons: this.summons, summonSerial: this.summonSerial, rng: this.rng.save(),
+    });
+  }
+
+  restore(snap: unknown) {
+    const s = structuredClone(snap) as { creatures: Creature[]; round: number; turnIndex: number; over: Combat['over']; turnSerial: number; onceUsed: [string, number][]; summons: Summon[]; summonSerial: number; rng: unknown };
+    // keep object identity: the UI holds references to creatures
+    for (const saved of s.creatures) {
+      const c = this.get(saved.id) as unknown as Record<string, unknown>;
+      for (const k of Object.keys(c)) delete c[k];
+      Object.assign(c, saved);
+    }
+    this.round = s.round; this.turnIndex = s.turnIndex; this.over = s.over; this.turnSerial = s.turnSerial;
+    this.onceUsed = new Map(s.onceUsed); this.summons = s.summons; this.summonSerial = s.summonSerial;
+    this.rng.load(s.rng);
+    this.events = [];
+  }
+
+  nextSummonId(): string { return `summon${++this.summonSerial}`; }
+
   // ------------------------------------------------------------ helpers
 
   addCondition(c: Creature, k: Condition) {
     c.conditions.push(k);
     this.emit({ type: 'condition', target: c.id, condition: k.id, added: true });
+    // Incapacitated (and Unconscious, which includes it) breaks concentration
+    if ((k.id === 'incapacitated' || k.id === 'unconscious') && c.concentration) endConcentration(this, c);
   }
 
   removeCondition(c: Creature, id: ConditionId) {
@@ -813,15 +984,15 @@ export class Combat {
   }
 
   usedThisTurn(c: Creature, what: string): boolean { return this.onceUsed.get(`${c.id}:${what}`) === this.turnSerial; }
-  private markUsed(c: Creature, what: string) { this.onceUsed.set(`${c.id}:${what}`, this.turnSerial); }
+  markUsed(c: Creature, what: string) { this.onceUsed.set(`${c.id}:${what}`, this.turnSerial); }
 
-  private log(text: string, tone: 'info' | 'good' | 'bad' | 'turn' = 'info') { this.emit({ type: 'log', text, tone }); }
-  private emit(e: GameEvent) { this.events.push(e); }
+  log(text: string, tone: 'info' | 'good' | 'bad' | 'turn' = 'info') { this.emit({ type: 'log', text, tone }); }
+  emit(e: GameEvent) { this.events.push(e); }
   private flush(): GameEvent[] { const e = this.events; this.events = []; return e; }
 }
 
 function freshTurn(speed: number): TurnState {
-  return { actions: 1, bonusActions: 1, reaction: true, movement: speed, attacksLeft: 0, lightWeapon: '', offhandUsed: false, nickUsed: false, dashed: 0 };
+  return { actions: 1, bonusActions: 1, reaction: true, movement: speed, attacksLeft: 0, lightWeapon: '', offhandUsed: false, nickUsed: false, dashed: 0, moved: false };
 }
 
 /** "dagger-throw" and "dagger" are the same weapon. */
