@@ -796,7 +796,7 @@ export class GameController {
         const v = this.vm.get(e.id)!;
         const hiddenEnemy = this.combat.get(e.id).side === 'enemy' && v.conds.has('hidden');
         const ch = r.figures.get(e.id)!.character;
-        if (!hiddenEnemy) ch.loop('Running_A', 0.15);
+        if (!hiddenEnemy) ch.loop(ch.spec.walk ?? 'Running_A', 0.15);
         for (let i = 1; i < e.path.length; i++) {
           const a = e.path[i - 1], b = e.path[i];
           const fig = r.figures.get(e.id)!.group;
@@ -812,7 +812,7 @@ export class GameController {
           v.pos = { ...b };
           if (!hiddenEnemy) r.ensureVisible(b.x, b.y, 0.75);
         }
-        ch.loop('Idle', 0.2);
+        ch.loop(ch.spec.idle ?? 'Idle', 0.2);
         return;
       }
       case 'attack': {

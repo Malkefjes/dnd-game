@@ -2,7 +2,7 @@
 // returns the events it produced so a renderer can animate them in order.
 import { Rng, rollD20, rollDice, resolveAdvantage, hitChanceWithDie, averageDice, parseDice, formatDice, type Advantage, type DiceExpr } from './dice';
 import { Grid, distanceFt, samePos, posKey, computeCover, COVER_AC, coverAtLeast, type Pos, type Cover } from './grid';
-import { abilityMod, SIZE_RANK, SKILL_ABILITY, type Ability, type AttackProfile, type Condition, type ConditionId, type Creature, type CreatureDef, type Skill, type Summon, type TurnState } from './types';
+import { abilityMod, SIZE_RANK, SKILL_ABILITY, type Ability, type AttackProfile, type Condition, type ConditionId, type Creature, type CreatureDef, type DamageType, type Skill, type Summon, type TurnState } from './types';
 import { castSpell, attackWithSummon, endConcentration, canCastShield, castShield, spellAttackRider, sleepEndOfTurn } from './spells';
 
 // ---------------------------------------------------------------- events
@@ -724,6 +724,24 @@ export class Combat {
 
   applyDamage(target: Creature, amount: number, damageType: string, parts: string[], source?: Creature, crit = false) {
     if (!this.isAlive(target)) return;
+    // Immunity, then Resistance (halve, round down), then Vulnerability (double) — 2024 order
+    const dt = damageType as DamageType;
+    if (target.immune?.includes(dt)) {
+      this.emit({ type: 'damage', target: target.id, amount: 0, damageType, hp: target.hp, parts: ['immune'] });
+      this.log(`${target.name} is immune to ${damageType} damage.`);
+      return;
+    }
+    if (target.resist?.includes(dt)) { amount = Math.floor(amount / 2); parts = [...parts, 'resisted']; }
+    if (target.vulnerable?.includes(dt)) { amount *= 2; parts = [...parts, 'vulnerable']; }
+    // Undead Fortitude (zombies): a CON save (DC 5 + the damage) to drop to 1 HP instead, unless Radiant or a crit
+    if (this.has(target, 'undeadFortitude') && target.hp > 0 && amount >= target.hp && dt !== 'radiant' && !crit) {
+      if (this.savingThrow(target, 'con', 5 + amount)) {
+        this.emit({ type: 'damage', target: target.id, amount: target.hp - 1, damageType, hp: 1, parts: [...parts, 'Undead Fortitude'] });
+        this.log(`${target.name} takes ${amount} ${damageType} damage but refuses to fall! (Undead Fortitude)`, target.side === 'party' ? 'good' : 'bad');
+        target.hp = 1;
+        return;
+      }
+    }
     if (target.hp === 0 && target.pc) {
       // damage while at 0 HP: a failed death save (two on a crit); massive damage kills outright
       if (amount >= target.maxHp) { this.kill(target); return; }
@@ -978,6 +996,7 @@ export class Combat {
   // ------------------------------------------------------------ helpers
 
   addCondition(c: Creature, k: Condition) {
+    if (c.conditionImmune?.includes(k.id)) { this.log(`${c.name} is immune to being ${k.id}.`); return; }
     c.conditions.push(k);
     this.emit({ type: 'condition', target: c.id, condition: k.id, added: true });
     // Incapacitated (and Unconscious, which includes it) breaks concentration

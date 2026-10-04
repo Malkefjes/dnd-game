@@ -59,4 +59,6 @@ export const archetypeIcon: Record<string, string> = {
   cleric: 'bless',
   wizard: 'fireBolt',
   hobgoblin: 'sword',
+  skeleton: 'skull',
+  zombie: 'skull',
 };

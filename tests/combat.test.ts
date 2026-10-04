@@ -4,7 +4,7 @@ import { RiggedRng } from '../src/engine/dice';
 import { Grid, type Pos } from '../src/engine/grid';
 import type { CreatureDef } from '../src/engine/types';
 import { torvald, nyx } from '../src/data/heroes';
-import { goblinWarrior, goblinBoss, goblinMinion, hobgoblinWarrior } from '../src/data/monsters';
+import { goblinWarrior, goblinBoss, goblinMinion, hobgoblinWarrior, skeleton, zombie } from '../src/data/monsters';
 
 const OPEN = [
   '..........',
@@ -303,5 +303,25 @@ describe('hobgoblins', () => {
     rng.push(18, 2, 4, 1, 1, 1); // advantage 18; 1d8 4 + 1; poison 3d4 = 3
     c.execute({ type: 'attack', actor: 'h', attack: 'longbow', target: 'torvald' });
     expect(c.get('torvald').hp).toBe(22 - 5 - 3);
+  });
+});
+
+describe('undead', () => {
+  it('Skeletons take double Bludgeoning damage and none from Poison', () => {
+    const { c } = arena([[torvald(2), { x: 0, y: 0 }], [skeleton('s'), { x: 5, y: 0 }]], [20, 1]);
+    const s = c.get('s');
+    c.applyDamage(s, 4, 'bludgeoning', []);
+    expect(s.hp).toBe(13 - 8);
+    c.applyDamage(s, 4, 'poison', []);
+    expect(s.hp).toBe(5);
+  });
+
+  it('Undead Fortitude keeps a zombie at 1 HP on a successful save, but not against Radiant', () => {
+    const { c, rng } = arena([[torvald(2), { x: 0, y: 0 }], [zombie('z'), { x: 5, y: 0 }], [zombie('y'), { x: 6, y: 0 }]], [20, 1, 1]);
+    rng.push(18); // CON save 18 + 3 = 21 vs DC 5 + 15 = 20
+    c.applyDamage(c.get('z'), 15, 'slashing', []);
+    expect(c.get('z').hp).toBe(1);
+    c.applyDamage(c.get('y'), 15, 'radiant', []);
+    expect(c.cond(c.get('y'), 'dead')).toBeTruthy();
   });
 });

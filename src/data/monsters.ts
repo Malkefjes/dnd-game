@@ -67,3 +67,37 @@ export function goblinBoss(id: string, name = 'Goblin Boss'): CreatureDef {
     description: 'Multiattack (2). Redirect Attack: when attacked, swaps places with an adjacent Small or Medium ally, who becomes the target.',
   };
 }
+
+// ---------------------------------------------------------------- undead (Milestone 3)
+
+/** Skeleton — Medium Undead, CR 1/4 (2025 MM / SRD 5.2). Vulnerable to Bludgeoning; immune to Poison. */
+export function skeleton(id: string, name = 'Skeleton'): CreatureDef {
+  const common = { ability: 'dex', abilityMod: 3, toHit: 5, damage: parseDice('1d6+3'), damageType: 'piercing', weapon: true } as const;
+  return {
+    id, name, side: 'enemy', controller: 'ai', size: 'medium', pc: false, cr: '1/4', xp: 50, model: 'skeleton', type: 'undead',
+    abilities: { str: 10, dex: 16, con: 15, int: 6, wis: 8, cha: 5 }, pb: 2, maxHp: 13, ac: 14, speed: 30,
+    saveProfs: [], skills: { perception: -1 },
+    attacks: [
+      { ...common, id: 'shortsword', name: 'Shortsword', kind: 'melee', reach: 5, finesse: true, light: true },
+      { ...common, id: 'shortbow', name: 'Shortbow', kind: 'ranged', reach: 0, range: [80, 320] },
+    ],
+    attacksPerAction: 1,
+    features: ['darkvision'],
+    vulnerable: ['bludgeoning'], immune: ['poison'], conditionImmune: ['poisoned', 'exhaustion'],
+    description: 'Shortsword or Shortbow. Vulnerable to Bludgeoning damage; immune to Poison.',
+  };
+}
+
+/** Zombie — Medium Undead, CR 1/4 (2025 MM / SRD 5.2). Undead Fortitude. */
+export function zombie(id: string, name = 'Zombie'): CreatureDef {
+  return {
+    id, name, side: 'enemy', controller: 'ai', size: 'medium', pc: false, cr: '1/4', xp: 50, model: 'zombie', type: 'undead',
+    abilities: { str: 13, dex: 6, con: 16, int: 3, wis: 6, cha: 5 }, pb: 2, maxHp: 15, ac: 8, speed: 20,
+    saveProfs: ['wis'], skills: { perception: -2 }, // WIS save +0
+    attacks: [{ id: 'slam', name: 'Slam', kind: 'melee', reach: 5, toHit: 3, damage: parseDice('1d8+1'), damageType: 'bludgeoning', ability: 'str', abilityMod: 1, weapon: false }],
+    attacksPerAction: 1,
+    features: ['undeadFortitude', 'darkvision'],
+    immune: ['poison'], conditionImmune: ['poisoned', 'exhaustion'],
+    description: 'Slam. Undead Fortitude: dropping to 0 HP, it may stay up at 1 HP (CON save) unless the damage was Radiant or a critical hit.',
+  };
+}

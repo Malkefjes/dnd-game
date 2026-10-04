@@ -3,7 +3,7 @@ import * as THREE from 'three';
 
 export type TileKind = 'floor' | 'wall' | 'door' | 'pillar' | 'rubble' | 'platform' | 'stairs' | 'barrel' | 'brazier';
 export interface Tile { x: number; y: number; kind: TileKind; h: number }
-export type Archetype = 'fighter' | 'rogue' | 'cleric' | 'wizard' | 'goblin' | 'goblinArcher' | 'goblinBoss' | 'hobgoblin';
+export type Archetype = 'fighter' | 'rogue' | 'cleric' | 'wizard' | 'goblin' | 'goblinArcher' | 'goblinBoss' | 'hobgoblin' | 'skeleton' | 'zombie';
 
 const LEGEND: Record<string, TileKind> = {
   '#': 'wall', D: 'door', '.': 'floor', P: 'pillar', r: 'rubble', H: 'platform', S: 'stairs', b: 'barrel', B: 'brazier',

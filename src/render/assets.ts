@@ -14,8 +14,11 @@ export const DUNGEON_PIECES = [
 ] as const;
 export type Piece = typeof DUNGEON_PIECES[number];
 
-const CHARACTER_FILES = ['Knight', 'Rogue', 'Rogue_Hooded', 'Barbarian', 'Mage'] as const;
+const CHARACTER_FILES = ['Knight', 'Rogue', 'Rogue_Hooded', 'Barbarian', 'Mage', 'Skeleton_Warrior', 'Skeleton_Minion', 'Skeleton_Rogue', 'Skeleton_Mage'] as const;
 type CharFile = typeof CHARACTER_FILES[number];
+/** Weapons and shields that come as separate models (the skeleton pack), attached to hand bones. */
+const PROP_FILES = ['Skeleton_Blade', 'Skeleton_Axe', 'Skeleton_Staff', 'Skeleton_Crossbow', 'Skeleton_Shield_Small_A', 'Skeleton_Shield_Large_A'] as const;
+type PropFile = typeof PROP_FILES[number];
 
 /** How each archetype is dressed and animated. */
 interface ModelSpec {
@@ -31,8 +34,13 @@ interface ModelSpec {
   ranged: string;
   /** Spellcasting animation for bolts and for buffs/heals. */
   cast?: string;
-  /** Re-tint the skin and add pointed ears: the hue of the new skin (0.25 goblin green, 0.04 hobgoblin red-orange). */
-  goblin?: number;
+  /** Re-tint the skin (goblin green 0.25, hobgoblin red-orange 0.03, zombie grey-green); `ears` adds goblin ears. */
+  skin?: { hue: number; sat: number; light?: number; ears?: boolean };
+  /** Separate prop models held in the hands. */
+  props?: { file: PropFile; hand: 'r' | 'l' }[];
+  /** Walk cycle (default Running_A) and idle (default Idle). */
+  walk?: string;
+  idle?: string;
   /** A hand-made prop (the cleric's mace). */
   prop?: 'mace';
 }
@@ -46,11 +54,16 @@ export const MODEL_SPECS: Record<Archetype, ModelSpec> = {
   cleric: { file: 'Knight', scale: [0.5, 0.5, 0.5], show: ['Badge_Shield', 'Knight_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', cast: 'Spellcast_Raise', prop: 'mace' },
   // an elf wizard: a touch taller and slimmer
   wizard: { file: 'Mage', scale: [0.47, 0.52, 0.47], show: ['2H_Staff', 'Mage_Hat', 'Mage_Cape'], melee: '1H_Melee_Attack_Stab', ranged: 'Throw', cast: 'Spellcast_Shoot' },
-  goblin: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['Knife'], rangedProp: '1H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: 'Throw', goblin: 0.25 },
-  goblinArcher: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['2H_Crossbow', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '2H_Ranged_Shoot', goblin: 0.25 },
-  goblinBoss: { file: 'Barbarian', scale: [0.44, 0.4, 0.44], show: ['1H_Axe', 'Barbarian_Round_Shield', 'Barbarian_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', goblin: 0.25 },
+  goblin: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['Knife'], rangedProp: '1H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: 'Throw', skin: { hue: 0.25, sat: 0.55, ears: true } },
+  goblinArcher: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['2H_Crossbow', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '2H_Ranged_Shoot', skin: { hue: 0.25, sat: 0.55, ears: true } },
+  goblinBoss: { file: 'Barbarian', scale: [0.44, 0.4, 0.44], show: ['1H_Axe', 'Barbarian_Round_Shield', 'Barbarian_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', skin: { hue: 0.25, sat: 0.55, ears: true } },
   // hobgoblins: knight-sized, red-orange skin, half plate and a longsword (KayKit has no bow: it shoots a crossbow-less "Throw")
-  hobgoblin: { file: 'Knight', scale: [0.5, 0.5, 0.5], show: ['1H_Sword', 'Rectangle_Shield', 'Knight_Helmet'], melee: '1H_Melee_Attack_Slice_Horizontal', ranged: '1H_Ranged_Shoot', goblin: 0.03 },
+  hobgoblin: { file: 'Knight', scale: [0.5, 0.5, 0.5], show: ['1H_Sword', 'Rectangle_Shield', 'Knight_Helmet'], melee: '1H_Melee_Attack_Slice_Horizontal', ranged: '1H_Ranged_Shoot', skin: { hue: 0.03, sat: 0.55, ears: true } },
+  // undead (KayKit Skeletons pack): a sword-and-board skeleton that swaps to a crossbow to shoot
+  skeleton: { file: 'Skeleton_Warrior', scale: [0.5, 0.5, 0.5], show: ['Skeleton_Warrior_Helmet', 'Skeleton_Warrior_Cloak'], props: [{ file: 'Skeleton_Blade', hand: 'r' }, { file: 'Skeleton_Shield_Small_A', hand: 'l' }],
+    melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '1H_Ranged_Shoot', walk: 'Walking_C' },
+  // a zombie: a human body with grey-green skin, shambling
+  zombie: { file: 'Rogue', scale: [0.5, 0.48, 0.5], show: [], melee: 'Unarmed_Melee_Attack_Punch_A', ranged: 'Throw', walk: 'Walking_D_Skeletons', skin: { hue: 0.2, sat: 0.18, light: 0.85 } },
 };
 
 const ACCESSORY_PARENTS = new Set(['handslot.l', 'handslot.r', 'head', 'chest']);
@@ -58,6 +71,7 @@ const ACCESSORY_PARENTS = new Set(['handslot.l', 'handslot.r', 'head', 'chest'])
 export class AssetLibrary {
   private pieces = new Map<string, THREE.Object3D>();
   private chars = new Map<string, GLTF>();
+  private props = new Map<string, THREE.Object3D>();
   clips: THREE.AnimationClip[] = [];
   private goblinTextures = new Map<string, THREE.Texture>();
   private texIds = new Map<THREE.Texture, number>();
@@ -65,7 +79,9 @@ export class AssetLibrary {
   async load(onProgress?: (done: number, total: number) => void) {
     const loader = new GLTFLoader();
     const jobs: [string, (g: GLTF) => void][] = [
-      ['characters/animations.glb', (g) => { this.clips = g.animations; }],
+      ['characters/animations.glb', (g) => { this.clips.push(...g.animations); }],
+      ['characters/undead-animations.glb', (g) => { this.clips.push(...g.animations); }],
+      ...PROP_FILES.map((f) => [`props/${f}.glb`, (g: GLTF) => this.props.set(f, g.scene)] as [string, (g: GLTF) => void]),
       ...CHARACTER_FILES.map((f) => [`characters/${f}.glb`, (g: GLTF) => this.chars.set(f, g)] as [string, (g: GLTF) => void]),
       ...DUNGEON_PIECES.map((p) => [`dungeon/${p}.glb`, (g: GLTF) => this.pieces.set(p, g.scene)] as [string, (g: GLTF) => void]),
     ];
@@ -94,7 +110,7 @@ export class AssetLibrary {
       if (mesh.isMesh) {
         // own materials per character so it can flash / fade independently
         const m = (mesh.material as THREE.MeshStandardMaterial).clone();
-        if (spec.goblin !== undefined && m.map) m.map = this.goblinTexture(m.map, spec.goblin);
+        if (spec.skin && m.map) m.map = this.skinTexture(m.map, spec.skin);
         m.roughness = 0.85; m.metalness = Math.min(m.metalness, 0.2);
         mesh.material = m;
         materials.push(m);
@@ -102,17 +118,33 @@ export class AssetLibrary {
         mesh.frustumCulled = false;
       }
     });
+    // only accessories (hand / head / chest attachments) are toggled; body parts always show
     for (const [name, o] of accessories) o.visible = spec.show.includes(name);
-    if (spec.goblin !== undefined) addGoblinEars(model, materials, spec.goblin);
+    if (spec.skin?.ears) addGoblinEars(model, materials, spec.skin.hue);
+    for (const p of spec.props ?? []) {
+      const hand = model.getObjectByName(`handslot.${p.hand}`);
+      const src = this.props.get(p.file);
+      if (!hand || !src) continue;
+      const prop = src.clone(true);
+      prop.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const m = (mesh.material as THREE.MeshStandardMaterial).clone();
+        m.roughness = 0.85; mesh.material = m; materials.push(m);
+        mesh.castShadow = true; mesh.frustumCulled = false;
+      });
+      hand.add(prop);
+    }
     if (spec.prop === 'mace') addMace(model, materials);
     model.scale.set(...spec.scale);
     return new Character(model, this.clips, spec, accessories, materials);
   }
 
-  /** Re-tint the skin tones of a KayKit gradient atlas to goblin green. */
-  private goblinTexture(tex: THREE.Texture, hue: number): THREE.Texture {
+  /** Re-tint the skin tones of a KayKit gradient atlas (goblin green, hobgoblin red, zombie grey). */
+  private skinTexture(tex: THREE.Texture, skin: NonNullable<ModelSpec['skin']>): THREE.Texture {
+    const { hue, sat, light = 1 } = skin;
     if (!this.texIds.has(tex)) this.texIds.set(tex, this.texIds.size);
-    const key = `${this.texIds.get(tex)}:${hue}`;
+    const key = `${this.texIds.get(tex)}:${hue}:${sat}:${light}`;
     const cached = this.goblinTextures.get(key);
     if (cached) return cached;
     const img = tex.image as HTMLImageElement | ImageBitmap;
@@ -127,7 +159,7 @@ export class AssetLibrary {
       // KayKit skin: warm, fairly light, moderately saturated
       if (hsl.h > 0.03 && hsl.h < 0.12 && hsl.s > 0.2 && hsl.l > 0.55 && hsl.l < 0.95) {
         // keep the shading gradient: lighter peach → lighter green
-        col.setHSL(hue + (hsl.h - 0.07) * 0.5, 0.55, 0.22 + (hsl.l - 0.55) * 0.9, THREE.SRGBColorSpace);
+        col.setHSL(hue + (hsl.h - 0.07) * 0.5, sat, (0.22 + (hsl.l - 0.55) * 0.9) * light + (1 - light) * 0.3, THREE.SRGBColorSpace);
         write(i);
       } else if (hsl.h < 0.045 && hsl.s > 0.3 && hsl.l > 0.22 && hsl.l < 0.6) {
         // red hair → a dark, scruffy goblin mop
@@ -198,7 +230,7 @@ export class Character {
   readonly mixer: THREE.AnimationMixer;
   private actions = new Map<string, THREE.AnimationAction>();
   private current?: THREE.AnimationAction;
-  private base = 'Idle';
+  private base: string;
 
   constructor(
     readonly model: THREE.Group,
@@ -209,7 +241,8 @@ export class Character {
   ) {
     this.mixer = new THREE.AnimationMixer(model);
     for (const c of clips) this.actions.set(c.name, this.mixer.clipAction(c));
-    this.loop('Idle', 0);
+    this.base = spec.idle ?? 'Idle';
+    this.loop(this.base, 0);
     // desynchronise idles so a group doesn't breathe in unison
     this.mixer.update(Math.random() * 2);
   }

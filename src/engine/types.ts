@@ -59,7 +59,7 @@ export type FeatureId =
   | 'secondWind' | 'actionSurge' | 'tacticalMind' | 'fightingStyleDefense' | 'weaponMastery'
   | 'sneakAttack' | 'cunningAction' | 'expertise'
   | 'savageAttacker' | 'alert' | 'luck' | 'brave' | 'halflingNimbleness' | 'naturallyStealthy' | 'dwarvenResilience' | 'darkvision'
-  | 'nimbleEscape' | 'redirectAttack' | 'packTactics'
+  | 'nimbleEscape' | 'redirectAttack' | 'packTactics' | 'undeadFortitude'
   // Milestone 2: casters and level 3 subclasses
   | 'spellcasting' | 'channelDivinity' | 'discipleOfLife' | 'potentCantrip' | 'tough' | 'feyAncestry' | 'keenSenses' | 'trance'
   | 'improvedCritical' | 'remarkableAthlete' | 'steadyAim' | 'assassinate';
@@ -67,7 +67,9 @@ export type FeatureId =
 export type ConditionId =
   | 'prone' | 'unconscious' | 'invisible' | 'hidden' | 'dodging' | 'disengaged'
   | 'sapped' | 'vexing' | 'slowed' | 'stable' | 'dead'
-  | 'incapacitated' | 'blessed' | 'shieldOfFaith' | 'shielded' | 'guided' | 'chilled' | 'steadyAim' | 'aided';
+  | 'incapacitated' | 'blessed' | 'shieldOfFaith' | 'shielded' | 'guided' | 'chilled' | 'steadyAim' | 'aided'
+  // rules for these arrive with the Milestone 3 bestiary; immunities can already name them
+  | 'poisoned' | 'exhaustion' | 'frightened' | 'grappled' | 'paralyzed' | 'restrained' | 'charmed';
 
 export interface Expiry {
   /** Whose turn boundary ends this effect. */
@@ -192,8 +194,13 @@ export interface CreatureDef {
   /** Which 3D model the renderer uses. */
   model?: string;
   spellcasting?: Spellcasting;
-  /** Creature type, for spells like Sleep (elves) or Hold Person (humanoids). */
+  /** Creature type, for spells like Sleep (elves) or Hold Person (humanoids), and Turn Undead. */
   type?: string;
+  /** Damage it takes half of / none of / double of. */
+  resist?: DamageType[];
+  immune?: DamageType[];
+  vulnerable?: DamageType[];
+  conditionImmune?: ConditionId[];
 }
 
 export interface Creature extends CreatureDef {
