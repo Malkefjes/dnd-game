@@ -41,7 +41,7 @@ Grukk the Goblin Boss, 4 Goblin Warriors (2 with bows), 2 Goblin Minions and 3 H
 - the AI casts spells too (it drives both sides in the sims)
 - spell effects (bolts, beams, area flashes, sparkles, a floating spectral mace) are real lights
 
-AI-vs-AI sims give the party ~79% wins over ~9 rounds. A human controlling four characters should find it a fair fight.
+AI-vs-AI sims give the party ~85% wins over ~9 rounds (300 seeds). A human controlling four characters should find it a fair fight.
 
 ### Roadmap (agreed order)
 
