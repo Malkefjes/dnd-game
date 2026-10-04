@@ -20,7 +20,9 @@ non-SRD 2024 content (all subclasses, etc.) is fine. Inspiration: Baldur's Gate 
   and agreed, because it scales to hundreds of monsters with animation and lighting for free.
 - **Art assets:** KayKit packs (CC0) for characters and dungeon. Goblins are KayKit rigs re-tinted green, with ears added.
 - **Deploy:** GitHub Pages via Actions on every push to `claude/dnd-browser-game-feasibility-0ajc1q`
-  (that branch is also the repo's default branch).
+  (that branch is also the repo's default branch, "main").
+- **Always push to main:** the owner tests on Pages. After every verified change, push it to
+  `claude/dnd-browser-game-feasibility-0ajc1q` too (fast-forward from the working branch), not just the session branch.
 
 ## Status
 
