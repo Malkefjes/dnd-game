@@ -7,10 +7,11 @@ A turn-based, single-player, isometric D&D combat game for the browser, built on
 
 **▶ Play it: https://malkefjes.github.io/dnd-game/** · Working on it with Claude? Start with [`CLAUDE.md`](CLAUDE.md). · [style mockups](https://malkefjes.github.io/dnd-game/mockups/)
 
-## Status: Milestone 1 (playable)
+## Status: Milestone 2 (playable)
 
-Milestone 1 is a single encounter that should be genuinely fun: **Torvald** (Dwarf Fighter 2)
-and **Nyx** (Halfling Rogue 2) against a goblin war band in their den.
+One encounter, the goblin den, now with a full party of four at level 3: **Torvald** (Dwarf Fighter, Champion),
+**Nyx** (Halfling Rogue, Assassin), **Maren** (Human Cleric, Life Domain) and **Elowen** (Elf Wizard, Evoker) against
+Grukk's goblins and their hobgoblin muscle. Milestone 2 added the spellcasting system and levels 1–3.
 
 | Part | State |
 |---|---|
@@ -18,6 +19,8 @@ and **Nyx** (Halfling Rogue 2) against a goblin war band in their den.
 | Rules engine (pure TypeScript, tested) | ✅ |
 | Tactical enemy AI | ✅ |
 | Playable game: renderer, input, animation, HUD | ✅ |
+| Spellcasting: slots, upcasting, concentration, areas, reaction prompts, spell effects | ✅ |
+| Party of 4, levels 1–3 with subclasses at 3 | ✅ |
 | Deploy: GitHub Pages via Actions on every push | ✅ |
 
 ### How it looks the way it does
@@ -48,8 +51,9 @@ the game uses, keeps the shared animations in one file, and quantises the meshes
 ### Controls
 
 Left click: move, or attack an enemy (auto-walks into range, warns about opportunity attacks) ·
-1–0: hotbar · right click / Esc: cancel · Space: end turn · WASD / right-drag: pan · wheel: zoom.
-URL options: `?seed=123` replays a specific fight, `?speed=3` speeds up animations.
+1–0: hotbar · Shift + 1–0: spells (pick the slot level above the hotbar to upcast) · right click / Esc: cancel ·
+Space: end turn (or cast a multi-target spell early) · Y / N: answer reaction prompts · WASD / right-drag: pan · wheel: zoom.
+URL options: `?seed=123` replays a specific fight, `?speed=3` speeds up animations, `?level=2` plays the party at level 2.
 
 ## Running
 
@@ -65,9 +69,9 @@ npx tsx tools/sim.ts 3    # play-by-play log of seed 3
 
 ```
 src/engine/   rules engine: dice (seeded), grid + cover, combat state machine, AI
-src/data/     2024 content: weapons, heroes, monsters
+src/data/     2024 content: weapons, spells, heroes (levels 1–3), monsters
 src/game/     encounters + the game controller (input, turn flow, event animation)
-src/render/   pixel renderer, KayKit asset loading + characters, dungeon builder, overlays
+src/render/   pixel renderer, KayKit asset loading + characters, dungeon builder, overlays, spell effects
 src/ui/       HUD (DOM)
 mockups/      the four visual-style mockups (Three.js / Canvas 2D)
 tests/        vitest suites
@@ -90,8 +94,17 @@ All randomness comes from a seeded RNG, so any fight can be replayed exactly.
 - Two-weapon fighting (Light property) with a different Light weapon
 - Conditions: Prone, Unconscious, Hidden, Dodging, Disengaged, Slowed, Sapped
 - Dropping to 0 HP, death saves, damage at 0 HP, massive damage, crits on unconscious targets, Potion of Healing (bonus action, can be fed to an ally)
-- **Fighter 2:** Defense style, Second Wind, Action Surge, Weapon Mastery, Savage Attacker
-- **Rogue 2:** Sneak Attack, Cunning Action, Expertise, Weapon Mastery, Alert, halfling Luck & Nimbleness
-- **Goblins** (Warrior, Minion, Boss): +1d4 on Advantage, Nimble Escape, Multiattack, Redirect Attack
+- Spellcasting: slots by level, upcasting, cantrip scaling, one slot per turn, concentration (CON saves, ends when
+  incapacitated), spell attacks, saving throws (half on success), areas on the grid (cone, sphere; damage rolled once)
+- Spells: Fire Bolt, Ray of Frost, Shocking Grasp, Sacred Flame, Toll the Dead, Magic Missile, Shield (reaction),
+  Burning Hands, Sleep, Guiding Bolt, Healing Word, Cure Wounds, Bless, Shield of Faith, Inflict Wounds, Scorching Ray,
+  Misty Step, Spiritual Weapon, Aid
+- Reactions you decide: Shield when hit, Opportunity Attacks
+- **Fighter 1–3:** Defense style, Second Wind, Action Surge, Weapon Mastery, Savage Attacker; Champion: Improved Critical, Remarkable Athlete (initiative)
+- **Rogue 1–3:** Sneak Attack, Cunning Action, Expertise, Weapon Mastery, Alert, halfling Luck & Nimbleness; Steady Aim; Assassin: Assassinate
+- **Cleric 1–3:** Protector, Channel Divinity (Divine Spark, Preserve Life), Life Domain spells, Disciple of Life, Tough, Alert
+- **Wizard 1–3:** Mage Armor (Magic Initiate), elven Trance (immune to Sleep); Evoker: Potent Cantrip
+- **Goblins** (Warrior, Minion, Boss): +1d4 on Advantage, Nimble Escape, Multiattack, Redirect Attack; they wake sleeping friends
+- **Hobgoblin Warrior:** Pack Tactics, Longbow with 3d4 poison
 
-Not yet: Cleave, grappling, Tactical Mind, Naturally Stealthy, spellcasting (Milestone 2).
+Not yet: Cleave, grappling, Tactical Mind, Naturally Stealthy, Heroic Inspiration, Counterspell.

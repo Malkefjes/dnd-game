@@ -14,7 +14,7 @@ export const DUNGEON_PIECES = [
 ] as const;
 export type Piece = typeof DUNGEON_PIECES[number];
 
-const CHARACTER_FILES = ['Knight', 'Rogue', 'Rogue_Hooded', 'Barbarian'] as const;
+const CHARACTER_FILES = ['Knight', 'Rogue', 'Rogue_Hooded', 'Barbarian', 'Mage'] as const;
 type CharFile = typeof CHARACTER_FILES[number];
 
 /** How each archetype is dressed and animated. */
@@ -29,7 +29,12 @@ interface ModelSpec {
   melee: string;
   offhand?: string;
   ranged: string;
-  goblin?: boolean;
+  /** Spellcasting animation for bolts and for buffs/heals. */
+  cast?: string;
+  /** Re-tint the skin and add pointed ears: the hue of the new skin (0.25 goblin green, 0.04 hobgoblin red-orange). */
+  goblin?: number;
+  /** A hand-made prop (the cleric's mace). */
+  prop?: 'mace';
 }
 
 export const MODEL_SPECS: Record<Archetype, ModelSpec> = {
@@ -37,9 +42,15 @@ export const MODEL_SPECS: Record<Archetype, ModelSpec> = {
   fighter: { file: 'Knight', scale: [0.56, 0.45, 0.56], show: ['1H_Sword', 'Round_Shield', 'Knight_Helmet'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw' },
   // a halfling
   rogue: { file: 'Rogue_Hooded', scale: [0.4, 0.4, 0.4], show: ['Knife', 'Knife_Offhand', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Stab', offhand: 'Dualwield_Melee_Attack_Stab', ranged: '2H_Ranged_Shoot' },
-  goblin: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['Knife'], rangedProp: '1H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: 'Throw', goblin: true },
-  goblinArcher: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['2H_Crossbow', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '2H_Ranged_Shoot', goblin: true },
-  goblinBoss: { file: 'Barbarian', scale: [0.44, 0.4, 0.44], show: ['1H_Axe', 'Barbarian_Round_Shield', 'Barbarian_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', goblin: true },
+  // a human cleric: no helmet, holy-symbol shield, a mace (KayKit has none, so it's built by hand)
+  cleric: { file: 'Knight', scale: [0.5, 0.5, 0.5], show: ['Badge_Shield', 'Knight_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', cast: 'Spellcast_Raise', prop: 'mace' },
+  // an elf wizard: a touch taller and slimmer
+  wizard: { file: 'Mage', scale: [0.47, 0.52, 0.47], show: ['2H_Staff', 'Mage_Hat', 'Mage_Cape'], melee: '1H_Melee_Attack_Stab', ranged: 'Throw', cast: 'Spellcast_Shoot' },
+  goblin: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['Knife'], rangedProp: '1H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: 'Throw', goblin: 0.25 },
+  goblinArcher: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['2H_Crossbow', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '2H_Ranged_Shoot', goblin: 0.25 },
+  goblinBoss: { file: 'Barbarian', scale: [0.44, 0.4, 0.44], show: ['1H_Axe', 'Barbarian_Round_Shield', 'Barbarian_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', goblin: 0.25 },
+  // hobgoblins: knight-sized, red-orange skin, half plate and a longsword (KayKit has no bow: it shoots a crossbow-less "Throw")
+  hobgoblin: { file: 'Knight', scale: [0.5, 0.5, 0.5], show: ['1H_Sword', 'Rectangle_Shield', 'Knight_Helmet'], melee: '1H_Melee_Attack_Slice_Horizontal', ranged: '1H_Ranged_Shoot', goblin: 0.03 },
 };
 
 const ACCESSORY_PARENTS = new Set(['handslot.l', 'handslot.r', 'head', 'chest']);
@@ -48,7 +59,8 @@ export class AssetLibrary {
   private pieces = new Map<string, THREE.Object3D>();
   private chars = new Map<string, GLTF>();
   clips: THREE.AnimationClip[] = [];
-  private goblinTextures = new Map<THREE.Texture, THREE.Texture>();
+  private goblinTextures = new Map<string, THREE.Texture>();
+  private texIds = new Map<THREE.Texture, number>();
 
   async load(onProgress?: (done: number, total: number) => void) {
     const loader = new GLTFLoader();
@@ -82,7 +94,7 @@ export class AssetLibrary {
       if (mesh.isMesh) {
         // own materials per character so it can flash / fade independently
         const m = (mesh.material as THREE.MeshStandardMaterial).clone();
-        if (spec.goblin && m.map) m.map = this.goblinTexture(m.map);
+        if (spec.goblin !== undefined && m.map) m.map = this.goblinTexture(m.map, spec.goblin);
         m.roughness = 0.85; m.metalness = Math.min(m.metalness, 0.2);
         mesh.material = m;
         materials.push(m);
@@ -91,14 +103,17 @@ export class AssetLibrary {
       }
     });
     for (const [name, o] of accessories) o.visible = spec.show.includes(name);
-    if (spec.goblin) addGoblinEars(model, materials);
+    if (spec.goblin !== undefined) addGoblinEars(model, materials, spec.goblin);
+    if (spec.prop === 'mace') addMace(model, materials);
     model.scale.set(...spec.scale);
     return new Character(model, this.clips, spec, accessories, materials);
   }
 
   /** Re-tint the skin tones of a KayKit gradient atlas to goblin green. */
-  private goblinTexture(tex: THREE.Texture): THREE.Texture {
-    const cached = this.goblinTextures.get(tex);
+  private goblinTexture(tex: THREE.Texture, hue: number): THREE.Texture {
+    if (!this.texIds.has(tex)) this.texIds.set(tex, this.texIds.size);
+    const key = `${this.texIds.get(tex)}:${hue}`;
+    const cached = this.goblinTextures.get(key);
     if (cached) return cached;
     const img = tex.image as HTMLImageElement | ImageBitmap;
     const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
@@ -112,7 +127,7 @@ export class AssetLibrary {
       // KayKit skin: warm, fairly light, moderately saturated
       if (hsl.h > 0.03 && hsl.h < 0.12 && hsl.s > 0.2 && hsl.l > 0.55 && hsl.l < 0.95) {
         // keep the shading gradient: lighter peach → lighter green
-        col.setHSL(0.25 + (hsl.h - 0.07) * 0.5, 0.55, 0.22 + (hsl.l - 0.55) * 0.9, THREE.SRGBColorSpace);
+        col.setHSL(hue + (hsl.h - 0.07) * 0.5, 0.55, 0.22 + (hsl.l - 0.55) * 0.9, THREE.SRGBColorSpace);
         write(i);
       } else if (hsl.h < 0.045 && hsl.s > 0.3 && hsl.l > 0.22 && hsl.l < 0.6) {
         // red hair → a dark, scruffy goblin mop
@@ -124,7 +139,7 @@ export class AssetLibrary {
     const t = new THREE.CanvasTexture(c);
     t.flipY = tex.flipY; t.colorSpace = tex.colorSpace; t.wrapS = tex.wrapS; t.wrapT = tex.wrapT;
     t.magFilter = tex.magFilter; t.minFilter = tex.minFilter; t.channel = tex.channel;
-    this.goblinTextures.set(tex, t);
+    this.goblinTextures.set(key, t);
     return t;
   }
 }
@@ -134,11 +149,11 @@ export class AssetLibrary {
  * animation. Placed in model space and converted into the bone's frame (the
  * bone's own axes don't line up with the model's).
  */
-function addGoblinEars(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[]) {
+function addGoblinEars(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[], hue: number) {
   const head = model.getObjectByName('head');
   if (!head) return;
   model.updateMatrixWorld(true);
-  const skin = new THREE.MeshStandardMaterial({ color: 0x6f9a38, roughness: 0.85 });
+  const skin = new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hue + 0.005, 0.47, 0.41, THREE.SRGBColorSpace), roughness: 0.85 });
   materials.push(skin);
   const headPos = head.getWorldPosition(new THREE.Vector3());
   const headQuat = head.getWorldQuaternion(new THREE.Quaternion()).invert();
@@ -154,6 +169,28 @@ function addGoblinEars(model: THREE.Object3D, materials: THREE.MeshStandardMater
     ear.scale.set(1, 1, 0.45);
     head.add(ear);
   }
+}
+
+/** A flanged mace in the right hand, built from primitives in the hand slot's frame. */
+function addMace(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[]) {
+  const hand = model.getObjectByName('handslot.r');
+  if (!hand) return;
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.9 });
+  const iron = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.45, metalness: 0.6 });
+  materials.push(wood, iron);
+  const mace = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 1.1, 6), wood);
+  shaft.position.y = 0.35;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), iron);
+  head.position.y = 0.95;
+  mace.add(shaft, head);
+  for (let i = 0; i < 4; i++) {
+    const flange = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.32, 0.3), iron);
+    flange.position.y = 0.95; flange.rotation.y = (i * Math.PI) / 4;
+    mace.add(flange);
+  }
+  mace.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.castShadow = true; });
+  hand.add(mace);
 }
 
 /** An animated KayKit character: mixer, clip lookup, and weapon swaps. */

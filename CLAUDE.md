@@ -24,26 +24,31 @@ non-SRD 2024 content (all subclasses, etc.) is fine. Inspiration: Baldur's Gate 
 
 ## Status
 
-**Milestone 1 is done and playable:** "The Goblin Den". Torvald (Dwarf Fighter 2) and Nyx (Halfling Rogue 2) face
-Goblin Warrior, Goblin Archer, Goblin Minion and Grukk the Goblin Boss. All of the following work:
-- click-to-move and click-to-attack (auto-approach into range, with opportunity attack warnings)
-- the full hotbar
-- AI turns
-- animations
-- death saves
-- victory and defeat screens
+**Milestone 1 is done:** "The Goblin Den", playable with click-to-move / click-to-attack, the hotbar, AI turns,
+animations, death saves, victory and defeat screens.
 
-AI-vs-AI sims give the party a ~63% win rate over ~8 rounds; a human playing well should win more often.
+**Milestone 2 is mostly done:** a party of four at level 3 with spellcasting. Torvald (Dwarf Fighter 3, Champion),
+Nyx (Halfling Rogue 3, Assassin), Maren (Human Cleric 3, Life) and Elowen (Elf Wizard 3, Evoker) take on a bigger den:
+Grukk the Goblin Boss, 4 Goblin Warriors (2 with bows), 2 Goblin Minions and 3 Hobgoblin Warriors. Working:
+- spell slots, upcasting (slot picker above the hotbar), cantrip scaling, the 2024 one-slot-per-turn rule
+- concentration (CON saves on damage, ends on Incapacitated, a new concentration spell replaces the old)
+- spell attacks, saving-throw spells, Magic Missile darts, cones and spheres on the grid (template overlay, damage
+  rolled once for the area), Sleep's two stages, Spiritual Weapon as a summon, Misty Step, Aid, Bless, Shield of Faith
+- Channel Divinity: Divine Spark, Preserve Life; Disciple of Life; Potent Cantrip
+- reaction prompts: Shield when hit, and the player's Opportunity Attacks (Y / N)
+- Champion (Improved Critical, Advantage on Initiative), Assassin (Assassinate), Steady Aim
+- heroes build at levels 1–3 (`torvald(level)` etc.; `?level=2` in the URL)
+- the AI casts spells too (it drives both sides in the sims)
+- spell effects (bolts, beams, area flashes, sparkles, a floating spectral mace) are real lights
+
+AI-vs-AI sims give the party ~79% wins over ~9 rounds. A human controlling four characters should find it a fair fight.
 
 ### Roadmap (agreed order)
 
-1. **Milestone 2:** party of 4. Add a Cleric (Life Domain) and a Wizard (Evoker), so the **spellcasting system** is needed:
-   - spell slots, concentration, saving-throw spells, attack spells, AoE templates on the grid
-   - upcasting, cantrips, ritual-free
-   - enough spells for levels 1–3 (Fire Bolt, Magic Missile, Shield, Burning Hands, Sleep, Cure Wounds, Healing Word,
-     Bless, Guiding Bolt, Sacred Flame, Spiritual Weapon…)
-   - reactions that need a player choice (Shield, Counterspell later), which means a reaction prompt UI
-   - levels 1–3 including subclass at 3
+1. **Milestone 2 (mostly done):** party of 4 with spellcasting, levels 1–3 with subclasses at 3. Left over:
+   - playtesting with a human on a real GPU (performance with 13 figures; the effect light pool)
+   - Counterspell and other reaction spells (the prompt mechanism is ready for them)
+   - a way to choose the party's level / prepared spells before a fight (data supports it; there's no UI)
 2. **Milestone 3:** a short dungeon of 5–6 encounters with exploration between fights:
    - short/long rests, levelling, loot
    - terrain interaction (shove off ledges, elevation, surfaces)
@@ -51,10 +56,17 @@ AI-vs-AI sims give the party a ~63% win rate over ~8 rounds; a human playing wel
 
 ### Known gaps / rough edges
 
-- **Rules not implemented:** Cleave mastery, grappling, Tactical Mind, Naturally Stealthy (halfling), spellcasting.
-- **Reactions:** player opportunity attacks are always taken automatically (`combat.autoReactions`); there's no prompt UI.
-- **Visual stand-ins:** KayKit has no bow, so shortbow users show a crossbow (rules still say Shortbow). All goblins share
-  one body type. The brazier is procedural.
+- **Rules not implemented:** Cleave mastery, grappling, Tactical Mind, Naturally Stealthy (halfling), Remarkable
+  Athlete's free move after a crit, Human Heroic Inspiration, Turn Undead (no undead yet), Lesser Restoration (nothing to
+  cure yet, so it isn't on the bar). Spell durations in rounds aren't tracked (fights end well inside 1 minute).
+- **Rulings (documented in code):** spheres are centred on a square and use grid distance (Sleep covers 3×3); cones
+  start at the caster's square with a half-angle of atan(½); Sleep, Bless and Preserve Life pick only allies or only
+  enemies automatically; Spiritual Weapon picks its own square next to the target; Preserve Life heals the most hurt
+  first; Champion's 19 counts as a hit. Elowen's Mage Armor is always up (cast each morning with Magic Initiate).
+- **AI choices:** drowsy creatures (Sleep stage 1) stay put; the AI never casts Aid or Shield of Faith, and only
+  Blesses in the first three rounds.
+- **Visual stand-ins:** KayKit has no bow, so shortbow users show a crossbow (rules still say Shortbow); hobgoblins
+  (re-tinted knights) have no bow prop at all. All goblins share one body type. Maren's mace and the brazier are procedural.
 - **Testing limits:** only tested in headless Chromium with software WebGL, which is very slow. Real-GPU performance
   hasn't been verified by Claude. If it's slow: reduce shadow-casting lights (`shadowBudget` in `pixel-renderer.ts`),
   drop the normals pass, or raise `pixel`.
@@ -67,15 +79,17 @@ src/engine/   rules: pure TypeScript, no DOM/three. Seeded RNG. Fully unit-teste
   grid.ts       Grid from map rows, step costs (5 ft diagonals, difficult terrain, ledges), cover (memoised)
   types.ts      CreatureDef / Creature / AttackProfile / conditions / turn economy
   combat.ts     Combat state machine: execute(Command) → GameEvent[]; all action rules live here
-  ai.ts         TacticalAI: one-turn utility planner (expected damage, OA risk, exposure, Nimble Escape)
-src/data/     2024 content: weapons.ts (table + weaponAttacks()), heroes.ts, monsters.ts
+  spells.ts     spellcasting: slots, targeting/areas, resolution, concentration, Shield, Sleep, Spiritual Weapon
+  ai.ts         TacticalAI: one-turn utility planner over attacks and spells; turn() is a command generator
+src/data/     2024 content: weapons.ts, spells.ts (SPELLS table), heroes.ts (levels 1–3), monsters.ts
 src/game/     encounters.ts (map rows + placements), controller.ts (input → commands, events → animation)
 src/render/   pixel-renderer.ts (scene, passes, camera, picking, tweens), assets.ts (KayKit loading,
-              Character animation wrapper, goblin retint/ears), dungeon.ts (map → KayKit pieces),
-              overlays.ts (move range, path, rings), models.ts (DungeonMap, shared types)
+              Character animation wrapper, goblin retint/ears, cleric mace), dungeon.ts (map → KayKit pieces),
+              overlays.ts (move range, path, rings, area templates), effects.ts (spell VFX, light pool),
+              models.ts (DungeonMap, shared types)
 src/ui/       hud.ts/.css (DOM HUD), icons.ts
 mockups/      the 4 original style mockups (frozen reference, not used by the game)
-tools/        sim.ts, playtest.mjs, view.mjs, shot.mjs, import-assets.mjs
+tools/        sim.ts, playtest.mjs, spellshot.mjs, view.mjs, shot.mjs, import-assets.mjs
 public/assets KayKit models (generated by tools/import-assets.mjs; don't hand-edit)
 ```
 
@@ -86,6 +100,20 @@ type if the renderer needs to show something.
 
 Movement emits `move` events **split into segments** around opportunity attacks, so the animation can play walk → get
 hit → keep walking.
+
+**Reactions:** the engine asks `combat.decide(prompt)` (Opportunity Attack, Shield). The default policy decides for
+the AI. The controller returns `undefined` for a player's creature, which throws `NeedsDecision` mid-command; the
+controller then restores `combat.snapshot()`, animates the events emitted so far, asks the player, and replays the
+command with the answer. The seeded RNG makes the replay identical, so already-shown events are skipped. Anything
+added to combat state must be covered by `snapshot()` / `restore()`.
+
+**AI turns** are generators (`ai.turn(id)` yields one command at a time and receives whether it worked), so the
+controller animates between steps and can pause for prompts. `ai.takeTurn(id)` runs one synchronously (tests, sims).
+
+**Spells** are data (`SpellDef` in `src/data/spells.ts`: range, shape, attack/save, damage/heal dice, upcast dice).
+Creatures carry them in `spellcasting.spells`; generic attack/save/heal paths cover most spells, and anything special
+(riders, Sleep, Bless, Spiritual Weapon…) is handled by id in `engine/spells.ts`. Spell attacks become
+`AttackProfile`s (`spell` set, `weapon: false`) and go through the normal attack pipeline.
 
 ### Rendering pipeline (`pixel-renderer.ts`)
 
@@ -136,20 +164,26 @@ Visual checks (start `npx vite` first; it serves on 127.0.0.1:5173):
 
 ```bash
 node tools/view.mjs "http://127.0.0.1:5173/?seed=5" out.png "g.r.setZoom(2.5); g.r.lookAt(7,4,true)" 5000
-node tools/playtest.mjs "http://127.0.0.1:5173/?seed=11&speed=4" outdir 80   # bot plays real turns, screenshots
+node tools/playtest.mjs "http://127.0.0.1:5173/?seed=11&speed=8" outdir 300  # bot plays real turns, screenshots
+CLICKS=3 node tools/spellshot.mjs "http://127.0.0.1:5173/?seed=5&play=1&speed=3" outdir magicMissile gob1
 ```
 
-- **Headless browser:** Playwright with Chromium at `/opt/pw-browsers`, launched with `--use-angle=swiftshader`. It's slow,
-  so use `?speed=4` to speed up animations.
+- **Headless browser:** Playwright with Chromium at `/opt/pw-browsers`, launched with `--use-angle=swiftshader`. It's very
+  slow (≈1.5 fps with the 13-figure den, and animation time is clamped per frame), so use `?speed=8` and generous waits.
+  The playtest bot answers reaction prompts with Y.
 - **Debug handle:** `window.game` is the GameController (`.combat`, `.r` renderer, `.hud`).
-- **URL params:** `?seed=N` gives a deterministic fight, and `?play=1` skips the intro.
+- **URL params:** `?seed=N` gives a deterministic fight, `?play=1` skips the intro, `?level=1|2|3` sets the party level.
 - **After deploy:** check the Actions run; Pages serves from `/dnd-game/`, so the Vite `base` is `'./'`.
 
 ## Conventions and gotchas
 
 - **Engine tests:** use `RiggedRng`. Each test pushes exact die results in the order the engine consumes them:
-  initiative d20s in add order, then attack d20(s), damage dice, Savage Attacker reroll, rider dice, Sneak Attack.
-  Remember that advantage consumes two d20s (e.g. from Vex).
+  initiative d20s in add order, then attack d20(s), Bless d4, damage dice, Savage Attacker reroll, rider dice, Sneak
+  Attack, extra damage of another type (Hobgoblin poison). Saving throws: d20(s) then Bless d4. Area spells roll every
+  save first (creatures in add order), then the damage once. Advantage consumes two d20s (Vex, Steady Aim, and
+  initiative for the level 3 Champion and Assassin; tests mostly use `torvald(2)` / `nyx(2)` to avoid that).
+- **Lights:** never add or remove lights during play. three.js recompiles every shader when the light count changes,
+  which is a hitch on a GPU and a long freeze in SwiftShader. Effects borrow lights from the pool in `effects.ts`.
 - **"Once per turn" features** (Sneak Attack, Savage Attacker) key off `combat.turnSerial`, not the creature's own turn,
   so Sneak Attack can trigger on an opportunity attack during an enemy's turn.
 - **Effect expiry:** `{ creature, when: 'start'|'end', turn: turnsStarted+1 }` covers both "until the start of your next

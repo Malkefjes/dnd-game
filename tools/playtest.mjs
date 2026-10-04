@@ -20,6 +20,8 @@ for (let step = 0; step < +maxSteps; step++) {
       actions: a?.turn.actions, attacksLeft: a?.turn.attacksLeft, moved: a ? a.speed - a.turn.movement : 0 };
   });
   if (st.over) break;
+  // reaction prompts (Shield, Opportunity Attacks): always say yes
+  if (await page.$('.ask')) { if (shot < 14) await page.screenshot({ path: `${out}/${String(shot++).padStart(2, '0')}-reaction.png` }); await page.keyboard.press('y'); await page.waitForTimeout(500); continue; }
   if (!st.player || st.busy) { await page.waitForTimeout(700); continue; }
   await page.waitForTimeout(1200); // let the camera settle on the active hero
   // choose the nearest visible enemy and hover it

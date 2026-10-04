@@ -4,11 +4,18 @@ import { icon } from './icons';
 
 export interface InitEntry { id: string; name: string; side: 'party' | 'enemy'; initiative: number; hpFrac: number; dead: boolean; active: boolean; hidden: boolean }
 export interface PartyCard { id: string; name: string; hp: number; maxHp: number; status: string; active: boolean; dead: boolean; side: 'party' | 'enemy' }
-export interface Slot { key: string; icon: string; label: string; cost: 'action' | 'bonus' | 'free'; enabled: boolean; selected: boolean; uses?: number; tip: string }
+export interface Slot { key: string; icon: string; label: string; cost: 'action' | 'bonus' | 'free' | 'reaction'; enabled: boolean; selected: boolean; uses?: number; tip: string }
 export interface HotbarState {
   id: string; name: string; title: string; hp: number; maxHp: number; ac: number; side: 'party' | 'enemy';
   actions: number; bonus: number; reaction: boolean; movement: number; speed: number; previewMove?: number;
   slots: Slot[]; waiting: boolean;
+  /** Second row: spells and Channel Divinity. */
+  spells?: Slot[];
+  /** Spell slots by level: left of max. */
+  pips?: { level: number; left: number; max: number }[];
+  concentration?: string;
+  /** Upcast / multi-target picker shown above the hotbar while a spell is being aimed. */
+  picker?: { title: string; options: { key: string; label: string; selected: boolean; enabled: boolean }[] };
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -90,10 +97,16 @@ export class Hud {
     }
     const movePct = Math.round((s.movement / Math.max(1, s.speed)) * 100);
     const prevPct = s.previewMove !== undefined ? Math.round((Math.max(0, s.movement - s.previewMove) / Math.max(1, s.speed)) * 100) : movePct;
-    const slots = s.slots.map((sl, i) => `
-      <div class="slot cost-${sl.cost} ${sl.enabled ? '' : 'disabled'} ${sl.selected ? 'selected' : ''}" data-slot="${sl.key}" data-tip="${esc(sl.tip)}">
-        ${icon(sl.icon, 27)}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}<span class="key">${i < 9 ? i + 1 : i === 9 ? 0 : ''}</span>
+    const slotHtml = (list: Slot[], prefix: string, extra = '') => list.map((sl, i) => `
+      <div class="slot ${extra} cost-${sl.cost} ${sl.enabled ? '' : 'disabled'} ${sl.selected ? 'selected' : ''}" data-slot="${sl.key}" data-tip="${esc(sl.tip)}">
+        ${icon(sl.icon, 27)}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}<span class="key">${i < 10 ? prefix + ((i + 1) % 10) : ''}</span>
       </div>`).join('');
+    const slots = slotHtml(s.slots, '');
+    const spells = s.spells?.length ? `<div class="slots spells">${slotHtml(s.spells, '⇧', 'spell')}</div>` : '';
+    const roman = ['', 'I', 'II', 'III', 'IV', 'V'];
+    const pips = s.pips?.length ? `<span class="spell-pips" title="Spell slots">${s.pips.map((p) => `<span class="lvl">${roman[p.level]}</span>${'<i class="on"></i>'.repeat(p.left)}${'<i></i>'.repeat(Math.max(0, p.max - p.left))}`).join('')}</span>` : '';
+    const conc = s.concentration ? `<span class="conc" title="Concentrating">◈ ${esc(s.concentration)}</span>` : '';
+    const picker = s.picker ? `<div class="picker panel"><span class="ptitle">${esc(s.picker.title)}</span>${s.picker.options.map((o) => `<button class="pick ${o.selected ? 'selected' : ''} ${o.enabled ? '' : 'disabled'}" data-slot="${o.key}">${esc(o.label)}</button>`).join('')}</div>` : '';
     this.hotbarEl.className = `hotbar panel interactive ${s.waiting ? 'waiting' : ''}`;
     this.hotbarEl.innerHTML = `
       <div class="active-info">
@@ -110,9 +123,12 @@ export class Hud {
           <span class="pip bonus ${s.bonus > 0 ? 'on' : ''}" title="Bonus Action"></span><span class="lbl">Bonus</span>
           <span class="pip reaction ${s.reaction ? 'on' : ''}" title="Reaction"></span><span class="lbl">Reaction</span>
           <div class="move" title="Movement"><div class="move-fill" style="width:${movePct}%"></div><div class="move-preview" style="left:${prevPct}%; width:${movePct - prevPct}%"></div><span>${s.movement} / ${s.speed} ft</span></div>
+          ${pips}${conc}
         </div>
         <div class="slots">${slots}</div>
+        ${spells}
       </div>
+      ${picker}
       <div class="end-turn" data-tip="End your turn. <i>(Space)</i>">${icon('hourglass', 21)}<span>End Turn</span></div>`;
   }
 
@@ -163,6 +179,29 @@ export class Hud {
     (p.lastElementChild!.firstElementChild as HTMLElement).style.width = `${Math.round(hpFrac * 100)}%`;
     const ic = p.firstElementChild as HTMLElement;
     if (ic.textContent !== icons) ic.textContent = icons;
+  }
+
+  /** A choice that doesn't cover the battlefield (reaction prompts). Resolves with the chosen button's index. */
+  ask(html: string, buttons: { label: string; secondary?: boolean }[]): Promise<number> {
+    return new Promise((resolve) => {
+      const box = el('div', 'ask panel interactive'); box.innerHTML = html;
+      const row = el('div', 'ask-row');
+      buttons.forEach((b, i) => {
+        const btn = el('button', `btn ${b.secondary ? 'secondary' : ''}`); btn.textContent = b.label;
+        btn.addEventListener('click', () => { box.remove(); removeEventListener('keydown', key, true); resolve(i); });
+        row.appendChild(btn);
+      });
+      // Y / N (or Enter / Escape) answer from the keyboard
+      const key = (e: KeyboardEvent) => {
+        const k = e.key.toLowerCase();
+        const i = k === 'y' || k === 'enter' ? 0 : k === 'n' || k === 'escape' ? buttons.length - 1 : -1;
+        if (i < 0) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        box.remove(); removeEventListener('keydown', key, true); resolve(i);
+      };
+      addEventListener('keydown', key, true);
+      box.appendChild(row); this.root.appendChild(box);
+    });
   }
 
   modal(html: string, buttons: { label: string; secondary?: boolean; onClick: () => void }[]): () => void {

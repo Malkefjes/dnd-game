@@ -2,21 +2,30 @@
 // and the AI's turns. The engine is authoritative; the view model (vm) mirrors
 // it event-by-event so the HUD and figures change exactly when animations do.
 import * as THREE from 'three';
-import { Combat, RuleError, type AttackPreview, type Command, type GameEvent } from '../engine/combat';
+import { Combat, NeedsDecision, RuleError, type AttackPreview, type Command, type GameEvent, type ReactionPrompt } from '../engine/combat';
 import { TacticalAI } from '../engine/ai';
+import { formatDice } from '../engine/dice';
 import { distanceFt, samePos, type Pos } from '../engine/grid';
-import type { AttackProfile, Creature } from '../engine/types';
+import type { AttackProfile, Creature, SpellDef } from '../engine/types';
+import {
+  areaSquares, areaVictims, castBlocker, failChance, pointError, slotOptions, spellAttackProfile, spellDamage, spellHealing, spellOf,
+  summonCanReach, summonsOf, targetCount, targetError, weaponSpot,
+} from '../engine/spells';
 import { PixelRenderer } from '../render/pixel-renderer';
 import { Overlays } from '../render/overlays';
+import { Effects, SPELL_COLOR } from '../render/effects';
 import type { Archetype } from '../render/models';
-import { Hud, esc, hpBar, type Slot } from '../ui/hud';
+import { Hud, esc, hpBar, type HotbarState, type Slot } from '../ui/hud';
 
 type Mode =
   | { kind: 'default' }
   | { kind: 'attack'; attack: string; offhand: boolean }
   | { kind: 'shove'; effect: 'push' | 'prone' }
   | { kind: 'potion' }
-  | { kind: 'help' };
+  | { kind: 'help' }
+  /** Aiming a spell. Multi-target spells collect `targets` click by click. */
+  | { kind: 'spell'; spell: string; slot: number; targets: string[] }
+  | { kind: 'summon'; summon: string };
 
 interface Approach { dest: Pos; path: Pos[]; cost: number; provokers: Creature[] }
 type Plan =
@@ -25,13 +34,23 @@ type Plan =
   | { kind: 'shove'; target: Creature; effect: 'push' | 'prone'; approach: Approach; dc: number }
   | { kind: 'potion'; target: Creature; approach: Approach }
   | { kind: 'help'; target: Creature; approach: Approach }
+  /** `complete` false: the click only adds a target to a multi-target spell. */
+  | { kind: 'cast'; spell: SpellDef; slot: number; targets: Creature[]; point?: Pos; area?: Pos[]; approach: Approach; complete: boolean; at: Pos }
+  | { kind: 'summonAttack'; summon: string; target: Creature }
   | { kind: 'info'; html: string; at: Pos }
   | { kind: 'invalid'; reason: string; at: Pos };
 
 interface VM { hp: number; pos: Pos; conds: Set<string>; dead: boolean }
 
-const CONDITION_ICON: Record<string, string> = { hidden: '👁', prone: '⤵', dodging: '🛡', sapped: '⇩', slowed: '🐌', disengaged: '↯', stable: '✚', vexing: '' };
-const CONDITION_NAME: Record<string, string> = { hidden: 'Hidden', prone: 'Prone', dodging: 'Dodging', sapped: 'Sapped', slowed: 'Slowed', disengaged: 'Disengaged', stable: 'Stable', unconscious: 'Unconscious', vexing: 'Vexing' };
+const CONDITION_ICON: Record<string, string> = {
+  hidden: '👁', prone: '⤵', dodging: '🛡', sapped: '⇩', slowed: '🐌', disengaged: '↯', stable: '✚', vexing: '',
+  incapacitated: 'z', blessed: '✦', shieldOfFaith: '⛨', shielded: '◈', guided: '✧', chilled: '❄', steadyAim: '◎', aided: '♥',
+};
+const CONDITION_NAME: Record<string, string> = {
+  hidden: 'Hidden', prone: 'Prone', dodging: 'Dodging', sapped: 'Sapped', slowed: 'Slowed', disengaged: 'Disengaged', stable: 'Stable', unconscious: 'Unconscious', vexing: 'Vexing',
+  incapacitated: 'Drowsy', blessed: 'Blessed', shieldOfFaith: 'Shield of Faith', shielded: 'Shield', guided: 'Marked', chilled: 'Chilled', steadyAim: 'Steady Aim', aided: 'Aid',
+};
+const ORDINAL = ['', '1st', '2nd', '3rd', '4th', '5th'];
 
 export class GameController {
   readonly combat: Combat;
@@ -39,6 +58,7 @@ export class GameController {
   readonly hud: Hud;
   private ai: TacticalAI;
   private ov: Overlays;
+  private fx: Effects;
   private vm = new Map<string, VM>();
   private mode: Mode = { kind: 'default' };
   private busy = true;
@@ -59,6 +79,7 @@ export class GameController {
     this.combat = combat;
     this.r = r;
     this.ov = new Overlays(this.r);
+    this.fx = new Effects(this.r);
     this.ai = new TacticalAI(combat);
     for (const c of combat.creatures) {
       const enemy = combat.enemiesOf(c)[0];
@@ -101,8 +122,10 @@ export class GameController {
         this.busy = true;
         this.refreshHud();
         await this.r.wait(0.35);
-        const events = this.ai.takeTurn(a.id);
-        await this.play(events);
+        // the AI turn runs one command at a time, animating as it goes (and pausing for reaction prompts)
+        const turn = this.ai.turn(a.id);
+        let step = turn.next();
+        while (!step.done) step = turn.next(!((await this.run(step.value)) instanceof RuleError));
         continue;
       }
       this.busy = false;
@@ -117,20 +140,75 @@ export class GameController {
     if (this.busy) return false;
     this.busy = true;
     this.ov.clearPlanning(); this.ov.setReach([]); this.hud.tooltip(null); this.hud.cursorTag(null);
-    let events: GameEvent[];
-    try { events = this.combat.execute(cmd); }
-    catch (e) {
-      if (!(e instanceof RuleError)) throw e;
+    const res = await this.run(cmd);
+    if (res instanceof RuleError) {
       const a = this.combat.active!;
       const p = this.r.projectHead(a.id);
-      this.hud.float(p.x, p.y, e.message, 'miss');
+      this.hud.float(p.x, p.y, res.message, 'miss');
       this.busy = false; this.refreshHud(); return false;
     }
-    await this.play(events);
     this.busy = false;
     if (cmd.type === 'endTurn' || this.combat.over || !this.isPlayerTurn() || this.combat.active!.id !== cmd.actor) await this.continueFlow();
     else { this.refreshHud(); this.mouse.dirty = true; }
     return true;
+  }
+
+  /**
+   * Execute a command and animate its events. If a player has to decide a reaction
+   * mid-way, the engine stops (NeedsDecision): rewind, show what happened so far,
+   * ask, and replay the command with the answers. The seeded RNG makes the replay
+   * identical up to the question, so the events already shown are skipped.
+   */
+  private async run(cmd: Command): Promise<GameEvent[] | RuleError> {
+    const c = this.combat;
+    const answers: boolean[] = [];
+    let shown = 0;
+    try {
+      for (;;) {
+        const snap = c.snapshot();
+        let asked = 0;
+        c.decide = (p) => {
+          if (c.get(p.reactor).controller !== 'player') return c.defaultReaction(p);
+          return asked < answers.length ? answers[asked++] : undefined;
+        };
+        try {
+          const events = c.execute(cmd);
+          await this.play(events.slice(shown));
+          return events;
+        } catch (e) {
+          if (e instanceof RuleError) return e;
+          if (!(e instanceof NeedsDecision)) throw e;
+          c.restore(snap);
+          await this.play(e.events.slice(shown));
+          shown = e.events.length;
+          answers.push(await this.askReaction(e.prompt));
+        }
+      }
+    } finally {
+      c.decide = (p) => c.defaultReaction(p);
+    }
+  }
+
+  private async askReaction(p: ReactionPrompt): Promise<boolean> {
+    const c = this.combat;
+    const reactor = c.get(p.reactor);
+    const v = this.vm.get(reactor.id)!;
+    this.r.lookAt(v.pos.x, v.pos.y);
+    if (p.kind === 'opportunity') {
+      const t = c.get(p.target);
+      const atk = c.bestMeleeAttack(reactor, t);
+      const chance = atk ? Math.round(c.previewAttack(reactor, atk, t).chance * 100) : 0;
+      const i = await this.hud.ask(`<h3>Reaction · ${esc(reactor.name)}</h3><p>${esc(t.name)} is leaving ${esc(reactor.name)}'s reach. Make an Opportunity Attack${atk ? ` with ${esc(atk.name)} (${chance}% to hit)` : ''}?</p>`,
+        [{ label: 'Attack (Y)' }, { label: 'Let it go (N)', secondary: true }]);
+      return i === 0;
+    }
+    const atk = c.get(p.attacker);
+    const left = reactor.slotsLeft.map((n, l) => (l > 0 && n > 0 ? `${ORDINAL[l]}: ${n}` : '')).filter(Boolean).join(', ');
+    const i = await this.hud.ask(`<h3>Reaction · ${esc(reactor.name)}</h3><p>${esc(atk.name)} hits ${esc(reactor.name)} — ${p.total} against AC ${p.ac}.
+      Cast <b>Shield</b> for +5 AC until ${esc(reactor.name)}'s next turn? ${p.wouldMiss ? 'The attack would <b>miss</b>.' : 'It would <b>still hit</b>, but Shield lasts for later attacks.'}</p>
+      <p class="tip-note">Uses a spell slot (${esc(left)}).</p>`,
+      [{ label: 'Cast Shield (Y)' }, { label: 'Take the hit (N)', secondary: true }]);
+    return i === 0;
   }
 
   private async execPlan(plan: Plan) {
@@ -150,6 +228,14 @@ export class GameController {
       case 'shove': await this.act({ type: 'shove', actor: a.id, target: plan.target.id, effect: plan.effect }); this.mode = { kind: 'default' }; break;
       case 'potion': await this.act({ type: 'potion', actor: a.id, target: plan.target.id }); this.mode = { kind: 'default' }; break;
       case 'help': await this.act({ type: 'stabilize', actor: a.id, target: plan.target.id }); this.mode = { kind: 'default' }; break;
+      case 'cast':
+        this.mode = { kind: 'default' };
+        await this.act({ type: 'cast', actor: a.id, spell: plan.spell.id, slot: plan.slot, targets: plan.targets.map((t) => t.id), point: plan.point });
+        break;
+      case 'summonAttack':
+        this.mode = { kind: 'default' };
+        await this.act({ type: 'summonAttack', actor: a.id, summon: plan.summon, target: plan.target.id });
+        break;
       default: break;
     }
     this.refreshHud(); this.mouse.dirty = true;
@@ -195,6 +281,14 @@ export class GameController {
     const at = target?.pos ?? tile;
     if (!at) return null;
     const m = this.mode;
+    if (m.kind === 'spell') return this.planSpell(a, m, target, at);
+    if (m.kind === 'summon') {
+      const s = this.combat.summons.find((x) => x.id === m.summon);
+      if (!s || !target || target.side === a.side) return { kind: 'invalid', reason: 'Pick an enemy for the weapon', at };
+      if (a.turn.bonusActions <= 0) return { kind: 'invalid', reason: 'Bonus Action already used', at };
+      if (!summonCanReach(this.combat, a, s, target)) return { kind: 'invalid', reason: 'The weapon can only fly 20 ft', at };
+      return { kind: 'summonAttack', summon: s.id, target };
+    }
 
     if (target && target.side !== a.side) {
       if (m.kind === 'attack') return this.planAttack(a, target, this.combat.attackOf(a, m.attack), m.offhand);
@@ -216,6 +310,12 @@ export class GameController {
       return best ?? { kind: 'info', html: this.creatureInfo(target), at };
     }
     if (target && target.side === a.side) {
+      // a fallen friend: Healing Word from afar if we have it
+      if (m.kind === 'default' && target.hp === 0 && a.spellcasting?.spells.some((x) => x.id === 'healingWord')) {
+        const hw = spellOf(a, 'healingWord');
+        const slot = slotOptions(a, hw)[0];
+        if (slot !== undefined && !castBlocker(this.combat, a, hw, slot)) return this.planSpell(a, { kind: 'spell', spell: 'healingWord', slot, targets: [] }, target, at);
+      }
       if (m.kind === 'potion' || (m.kind === 'default' && target.hp === 0 && (a.inv.potionOfHealing ?? 0) > 0 && a.turn.bonusActions > 0)) {
         if ((a.inv.potionOfHealing ?? 0) <= 0) return { kind: 'invalid', reason: 'No potions left', at };
         if (a.turn.bonusActions <= 0) return { kind: 'invalid', reason: 'Bonus Action already used', at };
@@ -238,6 +338,89 @@ export class GameController {
     const cell = this.combat.grid.cell(at.x, at.y);
     if (!res) return { kind: 'invalid', reason: cell?.blocksMove ? 'Blocked' : a.turn.movement <= 0 ? 'No movement left' : 'Too far', at };
     return { kind: 'move', approach: { dest: at, path: res.path, cost: res.cost, provokers: this.combat.provokersAlong(a, res.path) } };
+  }
+
+  private planSpell(a: Creature, m: Extract<Mode, { kind: 'spell' }>, target: Creature | undefined, at: Pos): Plan {
+    const c = this.combat;
+    const sp = spellOf(a, m.spell);
+    const why = castBlocker(c, a, sp, m.slot);
+    if (why) return { kind: 'invalid', reason: why, at };
+    const shape = sp.shape;
+    const none: Approach = { dest: a.pos, path: [a.pos], cost: 0, provokers: [] };
+    if (shape.kind === 'single') {
+      if (!target) return { kind: 'invalid', reason: sp.affects === 'ally' ? 'Pick an ally' : 'Pick a target', at };
+      const err = targetError(c, a, sp, target);
+      if (err && (err.startsWith('Pick') || err.includes('dead') || err.includes('unhurt') || err.includes('already') || err.includes('Already'))) return { kind: 'invalid', reason: err, at };
+      const ap = this.approachFor(a, (from) => !targetError(c, a, sp, target, from));
+      if (!ap) return { kind: 'invalid', reason: err ?? `Can't reach ${target.name} this turn`, at };
+      return { kind: 'cast', spell: sp, slot: m.slot, targets: [target], approach: ap, complete: true, at };
+    }
+    if (shape.kind === 'multi') {
+      if (!target) return { kind: 'invalid', reason: 'Pick a target', at };
+      const err = targetError(c, a, sp, target);
+      if (err) return { kind: 'invalid', reason: err, at };
+      if (!shape.repeat && m.targets.includes(target.id)) return { kind: 'invalid', reason: `${target.name} is already chosen`, at };
+      const targets = [...m.targets, target.id].map((id) => c.get(id));
+      return { kind: 'cast', spell: sp, slot: m.slot, targets, approach: none, complete: targets.length >= targetCount(sp, m.slot), at };
+    }
+    if (shape.kind === 'sphere' || shape.kind === 'cone' || shape.kind === 'point') {
+      const err = pointError(c, a, sp, at);
+      if (err) return { kind: 'invalid', reason: err, at };
+      const area = shape.kind === 'point' ? [at] : areaSquares(c, a, sp, at);
+      return { kind: 'cast', spell: sp, slot: m.slot, targets: [], point: at, area, approach: none, complete: true, at };
+    }
+    return { kind: 'invalid', reason: 'Click the spell again to cast it', at };
+  }
+
+  /** Tooltip for aiming a spell. */
+  private castTooltip(p: Extract<Plan, { kind: 'cast' }>): string {
+    const c = this.combat, a = c.active!;
+    const sp = p.spell, slot = p.slot;
+    const book = a.spellcasting!;
+    const lines: string[] = [];
+    const lvl = sp.uses ? 'Channel Divinity' : sp.level === 0 ? 'Cantrip' : `${ORDINAL[slot]}-level slot`;
+    const pct = (x: number) => `${Math.round(x * 100)}%`;
+    const who = (t: Creature) => `<span class="${t.side === a.side ? 'tip-warn' : ''}">${esc(t.name)}</span>`;
+    if (p.area) {
+      const victims = sp.shape.kind === 'point' ? [] : areaVictims(c, a, sp, p.area);
+      if (sp.id === 'sleep') lines.push(...victims.map((t) => `<div class="tip-row"><span>${esc(t.name)}</span><span>${c.has(t, 'trance') ? 'immune' : `${pct(failChance(c, t, 'wis', book.dc))} falls asleep`}</span></div>`));
+      else if (sp.save && sp.damage) {
+        lines.push(`<div class="tip-row"><span>${esc(formatDice(spellDamage(a, sp, slot)))} ${sp.damage.type}</span><span>${sp.save.toUpperCase()} save DC ${book.dc}</span></div>`);
+        lines.push(...victims.map((t) => `<div class="tip-row">${who(t)}<span>${pct(failChance(c, t, sp.save!, book.dc))} fails</span></div>`));
+        if (victims.some((t) => t.side === a.side)) lines.push('<div class="tip-warn">⚠ Your allies are in the area!</div>');
+      }
+      if (!victims.length && sp.shape.kind !== 'point') lines.push('<div class="tip-note">Nobody in the area.</div>');
+    }
+    if (sp.shape.kind === 'multi') {
+      const n = targetCount(sp, slot);
+      const counts = new Map<string, number>();
+      for (const t of p.targets) counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
+      lines.push(`<div class="tip-row big"><span>${p.targets.length} of ${n} ${sp.id === 'magicMissile' ? 'darts' : sp.id === 'scorchingRay' ? 'rays' : 'targets'}</span></div>`);
+      lines.push(`<div class="tip-note">${[...counts].map(([k, v]) => `${esc(k)}${v > 1 ? ` ×${v}` : ''}`).join(', ')}</div>`);
+      if (!p.complete) lines.push('<div class="tip-note">Click to add. Space casts with what you have.</div>');
+    }
+    const t = p.targets[p.targets.length - 1];
+    if (t && sp.damage && t.side !== a.side) {
+      if (sp.attack) {
+        const from = sp.id === 'spiritualWeapon' ? weaponSpot(c, a, t, p.approach.dest) ?? p.approach.dest : p.approach.dest;
+        const pr = c.previewAttack(a, spellAttackProfile(a, sp, slot, t), t, { from });
+        lines.push(`<div class="tip-row big"><span>${esc(t.name)}</span><span class="chance">${pct(pr.chance)}</span></div>`);
+        lines.push(`<div class="tip-row"><span>+${book.attack} vs AC ${pr.ac}</span><span>${esc(formatDice(spellDamage(a, sp, slot, t)))} ${sp.damage.type}</span></div>`);
+        if (pr.reasons.length) lines.push(`<div class="tip-note">${esc(pr.reasons.join(' · '))}</div>`);
+      } else if (sp.save) {
+        lines.push(`<div class="tip-row big"><span>${esc(t.name)}</span><span class="chance">${pct(failChance(c, t, sp.save, book.dc))}</span></div>`);
+        lines.push(`<div class="tip-row"><span>${sp.save.toUpperCase()} save DC ${book.dc}${sp.half ? ', half on a success' : ''}</span><span>${esc(formatDice(spellDamage(a, sp, slot, t)))} ${sp.damage.type}</span></div>`);
+      } else if (sp.id === 'magicMissile') lines.push(`<div class="tip-row"><span>Always hits</span><span>${esc(formatDice(spellDamage(a, sp, slot)))} force each</span></div>`);
+    } else if (t && sp.heal) {
+      lines.push(`<div class="tip-row big"><span>${esc(t.name)}</span><span class="chance">+${esc(formatDice(spellHealing(a, sp, slot)))}</span></div>`);
+      if (t.hp === 0) lines.push('<div class="tip-good">Brings them back to consciousness.</div>');
+    } else if (t) lines.push(`<div class="tip-row big"><span>${esc(t.name)}</span></div>`);
+    if (sp.concentration && a.concentration) lines.push(`<div class="tip-warn">Ends your concentration on ${esc(spellOf(a, a.concentration).name)}.</div>`);
+    if (sp.time === 'bonus') lines.push('<div class="tip-note">Bonus Action.</div>');
+    const ap = p.approach;
+    const move = (ap.cost > 0 ? `<div class="tip-note">Moves ${ap.cost} ft first.</div>` : '') +
+      (ap.provokers.length ? `<div class="tip-warn">⚠ Provokes an opportunity attack from ${ap.provokers.map((x) => esc(x.name)).join(', ')}.</div>` : '');
+    return `<div class="tip-head"><span class="tname">${esc(sp.name)}</span><span class="tsub">${lvl}</span></div>${lines.join('')}${move}`;
   }
 
   private creatureInfo(c: Creature): string {
@@ -281,6 +464,15 @@ export class GameController {
         return `<div class="tip-head"><span class="tname ally">${esc(p.target.name)}</span><span class="tsub">First Aid</span></div>
           <div class="tip-row big"><span>Stabilise</span><span class="chance">DC 10</span></div>
           <div class="tip-note">Wisdom (Medicine) check. A stable creature stops making death saves.</div>${approachNote(p.approach)}`;
+      case 'cast': return this.castTooltip(p);
+      case 'summonAttack': {
+        const s = this.combat.summons.find((x) => x.id === p.summon)!;
+        const pr = this.combat.previewAttack(a, spellAttackProfile(a, spellOf(a, 'spiritualWeapon'), s.slot, p.target), p.target, { from: weaponSpot(this.combat, a, p.target, a.pos, s.pos, 20) ?? s.pos });
+        return `<div class="tip-head"><span class="tname enemy">${esc(p.target.name)}</span><span class="tsub">Spiritual Weapon</span></div>
+          <div class="tip-row big"><span>Strike</span><span class="chance">${Math.round(pr.chance * 100)}%</span></div>
+          <div class="tip-row"><span>+${a.spellcasting!.attack} vs AC ${pr.ac}</span><span>${esc(pr.damageText)} force</span></div>
+          <div class="tip-note">Bonus Action: the weapon flies up to 20 ft and strikes.</div>`;
+      }
       case 'info': return p.html;
       default: return null;
     }
@@ -300,6 +492,11 @@ export class GameController {
     if (ap && ap.path.length > 1) this.ov.setPath(ap.path, ap.provokers.length > 0);
     if (plan.kind === 'attack' || plan.kind === 'shove') this.ov.setTarget(plan.target.pos);
     if (plan.kind === 'potion' || plan.kind === 'help') this.ov.setTarget(plan.target.pos, true);
+    if (plan.kind === 'summonAttack') this.ov.setTarget(plan.target.pos);
+    if (plan.kind === 'cast') {
+      if (plan.area) this.ov.setArea(plan.area, SPELL_COLOR[plan.spell.id] ?? 0xff8a3a);
+      if (plan.targets.length) this.ov.setTarget(plan.targets.map((t) => t.pos), plan.spell.affects === 'ally' || plan.targets[0].side === this.combat.active!.side);
+    }
     const tip = this.planTooltip(plan);
     if (tip) this.hud.tooltip(tip, this.mouse.x, this.mouse.y);
     if (plan.kind === 'move') {
@@ -309,7 +506,7 @@ export class GameController {
     }
     if (plan.kind === 'invalid') this.hud.cursorTag(plan.reason, this.mouse.x, this.mouse.y - 10, true);
     this.refreshHotbar(ap?.cost);
-    this.r.renderer.domElement.style.cursor = plan.kind === 'attack' || plan.kind === 'shove' ? 'crosshair' : plan.kind === 'invalid' ? 'not-allowed' : 'pointer';
+    this.r.renderer.domElement.style.cursor = plan.kind === 'attack' || plan.kind === 'shove' || plan.kind === 'cast' || plan.kind === 'summonAttack' ? 'crosshair' : plan.kind === 'invalid' ? 'not-allowed' : 'pointer';
   }
 
   // ------------------------------------------------------------ input
@@ -323,8 +520,13 @@ export class GameController {
       this.updateHover();
       const p = this.plan;
       if (!p) return;
-      if (p.kind === 'move') this.execPlan(p);
-      else if (p.kind === 'attack' || p.kind === 'shove' || p.kind === 'potion' || p.kind === 'help') this.execPlan(p);
+      if (p.kind === 'cast' && !p.complete && this.mode.kind === 'spell') {
+        // multi-target spell: this click only picks a target
+        this.mode = { ...this.mode, targets: p.targets.map((t) => t.id) };
+        this.refreshHotbar(); this.mouse.dirty = true;
+        return;
+      }
+      if (p.kind === 'move' || p.kind === 'attack' || p.kind === 'shove' || p.kind === 'potion' || p.kind === 'help' || p.kind === 'cast' || p.kind === 'summonAttack') this.execPlan(p);
     });
     cv.addEventListener('contextmenu', (e) => { e.preventDefault(); this.cancelMode(); });
     cv.addEventListener('wheel', (e) => { e.preventDefault(); this.r.setZoom(this.r.zoom * (e.deltaY > 0 ? 1.12 : 1 / 1.12)); this.mouse.dirty = true; }, { passive: false });
@@ -343,9 +545,16 @@ export class GameController {
       if (e.target instanceof HTMLInputElement) return;
       this.keys.add(e.key.toLowerCase());
       if (e.key === 'Escape') this.cancelMode();
-      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); this.endTurn(); }
-      const n = '1234567890'.indexOf(e.key);
-      if (n >= 0) { const slots = this.slots(); if (slots[n] && slots[n].enabled) this.onSlot(slots[n].key); }
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        // with darts / rays / blessings picked, Space casts; otherwise it ends the turn
+        if (this.mode.kind === 'spell' && this.mode.targets.length) this.onSlot('castNow'); else this.endTurn();
+      }
+      const n = e.code.startsWith('Digit') ? (Number(e.code.slice(5)) + 9) % 10 : -1;
+      if (n >= 0) {
+        const slots = e.shiftKey ? this.spellSlots() : this.slots();
+        if (slots[n] && slots[n].enabled) this.onSlot(slots[n].key);
+      }
     });
     addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
   }
@@ -365,7 +574,8 @@ export class GameController {
       const fig = this.r.figures.get(c.id)!;
       const hiddenEnemy = c.side === 'enemy' && v.conds.has('hidden');
       const p = this.r.projectHead(c.id, 0.18);
-      const icons = [...v.conds].map((x) => CONDITION_ICON[x] ?? '').join('');
+      let icons = [...v.conds].map((x) => CONDITION_ICON[x] ?? '').join('');
+      if (v.conds.has('unconscious') && v.hp > 0) icons = `Zz${icons}`;
       this.hud.plate(c.id, c.side, p.x, p.y, v.hp / c.maxHp, icons, !v.dead && !hiddenEnemy && fig.group.visible);
     }
   }
@@ -416,8 +626,43 @@ export class GameController {
       out.push({ key: 'secondWind', icon: 'secondWind', label: 'Second Wind', cost: 'bonus', uses: a.resourcesLeft.secondWind, enabled: (a.resourcesLeft.secondWind ?? 0) > 0 && a.turn.bonusActions > 0, selected: false, tip: `<div class="tname">Second Wind</div><div class="tip-note">Bonus Action: regain 1d10 + ${a.level} HP.</div>` });
     if (c.has(a, 'actionSurge'))
       out.push({ key: 'actionSurge', icon: 'actionSurge', label: 'Action Surge', cost: 'free', uses: a.resourcesLeft.actionSurge, enabled: (a.resourcesLeft.actionSurge ?? 0) > 0, selected: false, tip: '<div class="tname">Action Surge</div><div class="tip-note">Take one additional action this turn. Once per rest.</div>' });
+    if (c.has(a, 'steadyAim'))
+      out.push({ key: 'steadyAim', icon: 'steadyAim', label: 'Steady Aim', cost: 'bonus', enabled: a.turn.bonusActions > 0 && !a.turn.moved && !c.cond(a, 'steadyAim'), selected: false,
+        tip: `<div class="tname">Steady Aim</div><div class="tip-note">Bonus Action, only if you haven't moved this turn: Advantage on your next attack roll, but your Speed is 0 until the end of the turn.</div>${a.turn.moved ? '<div class="tip-warn">You have already moved.</div>' : ''}` });
     if (c.cond(a, 'prone'))
       out.unshift({ key: 'stand', icon: 'stand', label: 'Stand Up', cost: 'free', enabled: a.turn.movement >= Math.ceil(c.speedOf(a) / 2), selected: false, tip: '<div class="tname">Stand Up</div><div class="tip-note">Costs half your Speed.</div>' });
+    return out;
+  }
+
+  /** The second hotbar row: spells, Channel Divinity and Spiritual Weapon strikes. */
+  private spellSlots(): Slot[] {
+    const a = this.combat.active;
+    if (!a || a.controller !== 'player' || !a.spellcasting) return [];
+    const c = this.combat;
+    const book = a.spellcasting;
+    const out: Slot[] = [];
+    for (const s of summonsOf(c, a)) {
+      out.push({ key: `summon:${s.id}`, icon: 'strike', label: 'Spiritual Weapon', cost: 'bonus', enabled: a.turn.bonusActions > 0, selected: this.mode.kind === 'summon',
+        tip: '<div class="tname">Spiritual Weapon: Strike</div><div class="tip-note">Bonus Action: move the weapon up to 20 ft and make a melee spell attack against a creature within 5 ft of it.</div>' });
+    }
+    for (const sp of book.spells) {
+      const opts = slotOptions(a, sp);
+      const slot = this.mode.kind === 'spell' && this.mode.spell === sp.id ? this.mode.slot : opts[0];
+      const why = sp.time === 'reaction' ? 'reaction' : slot === undefined ? 'No spell slots left' : castBlocker(c, a, sp, slot);
+      const level = sp.uses ? 'Channel Divinity' : sp.level === 0 ? 'Cantrip' : `${ORDINAL[sp.level]}-level ${sp.school}`;
+      const stats = [
+        sp.time === 'bonus' ? 'Bonus Action' : sp.time === 'reaction' ? 'Reaction' : 'Action',
+        sp.range === 0 ? 'Self' : sp.range === 5 ? 'Touch' : `${sp.range} ft`,
+        sp.attack ? `+${book.attack} to hit` : sp.save ? `${sp.save.toUpperCase()} save DC ${book.dc}` : '',
+        sp.concentration ? 'Concentration' : '',
+      ].filter(Boolean).join(' · ');
+      out.push({
+        key: `spell:${sp.id}`, icon: sp.icon, label: sp.name, cost: sp.time === 'reaction' ? 'reaction' : sp.time === 'bonus' ? 'bonus' : 'action',
+        uses: sp.uses ? a.resourcesLeft[sp.uses] ?? 0 : undefined,
+        enabled: why === null, selected: this.mode.kind === 'spell' && this.mode.spell === sp.id,
+        tip: `<div class="tip-head"><span class="tname">${esc(sp.name)}</span><span class="tsub">${level}</span></div><div class="tip-row"><span>${esc(stats)}</span></div><div class="tip-note">${esc(sp.description)}</div>${why && why !== 'reaction' ? `<div class="tip-warn">${esc(why)}</div>` : ''}${sp.time === 'reaction' ? '<div class="tip-good">You will be asked when it can be used.</div>' : ''}`,
+      });
+    }
     return out;
   }
 
@@ -439,6 +684,32 @@ export class GameController {
       case 'secondWind': this.act({ type: 'secondWind', actor: a.id }); break;
       case 'actionSurge': this.act({ type: 'actionSurge', actor: a.id }); break;
       case 'stand': this.act({ type: 'standUp', actor: a.id }); break;
+      case 'steadyAim': this.act({ type: 'steadyAim', actor: a.id }); break;
+      case 'summon': this.toggleMode({ kind: 'summon', summon: arg }); break;
+      case 'spell': {
+        const sp = spellOf(a, arg);
+        const slot = slotOptions(a, sp)[0];
+        if (slot === undefined) break;
+        // spells without a target go off at once
+        if (sp.shape.kind === 'self' || sp.shape.kind === 'emanation') { this.mode = { kind: 'default' }; this.act({ type: 'cast', actor: a.id, spell: sp.id, slot }); break; }
+        if (this.mode.kind === 'spell' && this.mode.spell === sp.id) this.mode = { kind: 'default' };
+        else this.mode = { kind: 'spell', spell: sp.id, slot, targets: [] };
+        break;
+      }
+      case 'slotLevel':
+        if (this.mode.kind === 'spell') {
+          const sp = spellOf(a, this.mode.spell);
+          const slot = Number(arg);
+          this.mode = { ...this.mode, slot, targets: this.mode.targets.slice(0, Math.max(1, targetCount(sp, slot))) };
+        }
+        break;
+      case 'castNow':
+        if (this.mode.kind === 'spell' && this.mode.targets.length) {
+          const m = this.mode;
+          this.mode = { kind: 'default' };
+          this.act({ type: 'cast', actor: a.id, spell: m.spell, slot: m.slot, targets: m.targets });
+        }
+        break;
     }
     this.refreshHotbar(); this.mouse.dirty = true;
   }
@@ -459,6 +730,7 @@ export class GameController {
       let status = [...v.conds].map((k) => CONDITION_NAME[k]).filter(Boolean).join(', ');
       if (v.hp === 0 && !v.dead && !v.conds.has('stable')) status = `Dying — saves ${cr.deathSaves.success}✓ ${cr.deathSaves.fail}✗`;
       if (v.dead) status = 'Dead';
+      if (cr.concentration && !v.dead) status = `◈ ${spellOf(cr, cr.concentration).name}${status ? ` · ${status}` : ''}`;
       return { id: cr.id, name: cr.name, hp: v.hp, maxHp: cr.maxHp, status: status || cr.description || '', active: cr.id === this.activeId, dead: v.dead, side: cr.side };
     }));
     this.refreshHotbar();
@@ -477,11 +749,24 @@ export class GameController {
       return;
     }
     const v = this.vm.get(a.id)!;
-    this.hud.renderHotbar({
-      id: a.id, name: a.name, title: a.description ?? '', hp: v.hp, maxHp: a.maxHp, ac: a.ac, side: a.side,
+    const state: HotbarState = {
+      id: a.id, name: a.name, title: a.description ?? '', hp: v.hp, maxHp: a.maxHp, ac: this.combat.acOf(a), side: a.side,
       actions: a.turn.actions, bonus: a.turn.bonusActions, reaction: a.turn.reaction, movement: a.turn.movement, speed: this.combat.speedOf(a),
-      previewMove, slots: this.slots(), waiting: this.busy,
-    });
+      previewMove, slots: this.slots(), waiting: this.busy, spells: this.spellSlots(),
+      pips: a.spellcasting ? a.spellcasting.slots.map((max, level) => ({ level, max, left: a.slotsLeft[level] ?? 0 })).filter((p) => p.level > 0 && p.max > 0) : undefined,
+      concentration: a.concentration ? spellOf(a, a.concentration).name : undefined,
+    };
+    const m = this.mode;
+    if (m.kind === 'spell') {
+      const sp = spellOf(a, m.spell);
+      const options: NonNullable<HotbarState['picker']>['options'] = [];
+      // upcasting: every slot level that has a slot left
+      const levels = slotOptions(a, sp);
+      if (sp.level > 0 && levels.length > 1) for (const l of levels) options.push({ key: `slotLevel:${l}`, label: `${ORDINAL[l]} (${a.slotsLeft[l]})`, selected: l === m.slot, enabled: true });
+      if (sp.shape.kind === 'multi') options.push({ key: 'castNow', label: `Cast now (${m.targets.length}/${targetCount(sp, m.slot)})`, selected: false, enabled: m.targets.length > 0 });
+      state.picker = { title: `${sp.name}${sp.level > 0 ? ` · ${ORDINAL[m.slot]} level` : ''}`, options };
+    }
+    this.hud.renderHotbar(state);
   }
 
   // ------------------------------------------------------------ event animation
@@ -531,6 +816,7 @@ export class GameController {
         return;
       }
       case 'attack': {
+        if (e.spell) { await this.animateSpellAttack(e); return; }
         const atk = this.combat.get(e.attacker).attacks.find((x) => x.id === e.attack)!;
         const tv = this.vm.get(e.target)!;
         // a hidden attacker is revealed by attacking
@@ -624,12 +910,109 @@ export class GameController {
         if (anim) { const play = ch.once(anim, { impactAt: 0.5, speed: 1.2 }); await play.impact; }
         return;
       }
+      case 'cast': await this.animateCast(e); return;
+      case 'spellHit': await this.animateSpellHit(e); return;
+      case 'summon': this.fx.summonWeapon(e.summon.id, e.summon.pos); await r.wait(0.3); return;
+      case 'summonMove': await this.fx.moveWeapon(e.id, e.to); return;
+      case 'unsummon': this.fx.unsummonWeapon(e.id); return;
+      case 'teleport': {
+        const v = this.vm.get(e.id)!;
+        const f = r.figures.get(e.id)!;
+        this.fx.burst(r.worldOf(e.from.x, e.from.y).setY(r.floorY(e.from.x, e.from.y) + 0.6), SPELL_COLOR.mistyStep, 24, 0.6, 1.2);
+        await r.tween(0.2, (k) => { f.group.scale.setScalar(1 - k * 0.9); });
+        f.group.position.set(e.to.x, r.floorY(e.to.x, e.to.y), e.to.y);
+        v.pos = { ...e.to };
+        r.lookAt(e.to.x, e.to.y);
+        this.fx.burst(r.worldOf(e.to.x, e.to.y).setY(r.floorY(e.to.x, e.to.y) + 0.6), SPELL_COLOR.mistyStep, 24, 0.6, 1.2);
+        await r.tween(0.2, (k) => { f.group.scale.setScalar(0.1 + k * 0.9); });
+        f.group.scale.setScalar(1);
+        return;
+      }
+      case 'concentration': case 'maxHp': this.refreshHud(); return;
       case 'deathSave': {
         const p = this.head(e.target, 0.2);
         this.hud.float(p.x, p.y, `Death save: ${e.natural}  (${e.success}✓ ${e.fail}✗)`, e.natural >= 10 ? 'roll' : 'dmg');
         this.refreshHud(); await r.wait(0.8); return;
       }
       default: return;
+    }
+  }
+
+  /** Chest-height point of a figure, in world space. */
+  private chest(id: string, k = 0.6): THREE.Vector3 {
+    const f = this.r.figures.get(id)!;
+    return f.group.position.clone().add(new THREE.Vector3(0, f.down ? 0.25 : f.headHeight * k, 0));
+  }
+
+  /** A spell going off: the caster's gesture, then whatever the spell looks like at its destination. */
+  private async animateCast(e: Extract<GameEvent, { type: 'cast' }>) {
+    const r = this.r;
+    const caster = r.figures.get(e.actor)!;
+    const color = SPELL_COLOR[e.spell] ?? 0xffffff;
+    if (e.reaction) {
+      // Shield: a flash of force around the caster
+      const p = this.head(e.actor, 0.5); this.hud.float(p.x, p.y, 'Shield!', 'info');
+      await this.fx.bubble(caster.group.position.clone(), color);
+      return;
+    }
+    const first = e.targets.find((t) => t !== e.actor);
+    const aim = first ? this.vm.get(first)!.pos : e.point;
+    if (aim) r.face(e.actor, aim.x, aim.y);
+    const offensive = ['fireBolt', 'rayOfFrost', 'shockingGrasp', 'magicMissile', 'scorchingRay', 'guidingBolt', 'burningHands', 'sleep', 'sacredFlame', 'tollTheDead', 'inflictWounds', 'divineSpark'].includes(e.spell);
+    const anim = offensive ? 'Spellcast_Shoot' : 'Spellcast_Raise';
+    const play = caster.character.once(anim, { impactAt: 0.5, speed: 1.25 });
+    // a glow in the caster's hands while the spell gathers
+    this.fx.rise(this.chest(e.actor, 0.7), color, 10, 0.5);
+    await play.impact;
+    switch (e.spell) {
+      case 'burningHands': await this.fx.area(e.area ?? [], color, 'fire'); break;
+      case 'sleep': await this.fx.area(e.area ?? [], color, 'mist'); break;
+      case 'sacredFlame': if (first) await this.fx.column(this.vm.get(first)!.pos, color); break;
+      case 'divineSpark':
+        if (first && this.combat.get(first).side !== this.combat.get(e.actor).side) await this.fx.column(this.vm.get(first)!.pos, color);
+        break;
+      case 'tollTheDead': case 'inflictWounds': if (first) await this.fx.pulse(this.vm.get(first)!.pos, color); break;
+      case 'preserveLife': await this.fx.rise(caster.group.position.clone().setY(caster.group.position.y + 0.2), color, 40, 1); break;
+      default: break;
+    }
+  }
+
+  /** Spell attacks fly from the caster's hands (or swing from the Spiritual Weapon). */
+  private async animateSpellAttack(e: Extract<GameEvent, { type: 'attack' }>) {
+    const r = this.r;
+    const color = SPELL_COLOR[e.spell!] ?? 0xffffff;
+    const to = this.chest(e.target);
+    const tv = this.vm.get(e.target)!;
+    const roll = this.head(e.attacker, 0.45);
+    const modeTxt = e.mode === 'advantage' ? ' ▲' : e.mode === 'disadvantage' ? ' ▼' : '';
+    this.hud.float(roll.x, roll.y, `d20 ${e.natural} → ${e.total}${modeTxt}`, 'roll');
+    if (e.summon) await this.fx.swingWeapon(e.summon, to);
+    else {
+      r.face(e.attacker, tv.pos.x, tv.pos.y);
+      const from = this.chest(e.attacker, 0.7);
+      // a missed shot sails past
+      const dest = e.hit ? to : to.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.9, 0.3, (Math.random() - 0.5) * 0.9));
+      if (e.spell === 'shockingGrasp') { this.fx.burst(to, color, 20, 0.4, 1.2); await r.wait(0.15); }
+      else if (e.spell === 'rayOfFrost' || e.spell === 'scorchingRay') await this.fx.beam(from, dest, color, e.spell === 'rayOfFrost' ? 0.06 : 0.05, 0.25);
+      else await this.fx.bolt(from, dest, color, e.spell === 'guidingBolt' ? 0.15 : 0.11, 13, 0.25);
+    }
+    const hp = this.head(e.target);
+    if (!e.hit) this.hud.float(hp.x, hp.y, 'Miss', 'miss');
+    else if (e.crit) this.hud.float(hp.x, hp.y - 26, 'Critical!', 'crit');
+  }
+
+  /** Effects that land without an attack roll: darts, heals, blessings. */
+  private async animateSpellHit(e: Extract<GameEvent, { type: 'spellHit' }>) {
+    const color = SPELL_COLOR[e.spell] ?? 0xffffff;
+    const to = this.chest(e.target);
+    if (e.spell === 'magicMissile') {
+      const from = this.chest(e.actor, 0.7);
+      await this.fx.bolt(from, to, color, 0.08, 11, 0.6 + Math.random() * 0.5);
+      return;
+    }
+    const f = this.r.figures.get(e.target)!;
+    if (['healingWord', 'cureWounds', 'preserveLife', 'divineSpark', 'bless', 'shieldOfFaith', 'aid'].includes(e.spell)) {
+      await this.fx.rise(f.group.position.clone().setY(f.group.position.y + 0.1), color, 22, 0.7);
     }
   }
 
@@ -674,8 +1057,8 @@ export class GameController {
     const standing = party.filter((c) => this.combat.isConscious(c)).map((c) => c.name);
     const rounds = this.round;
     const html = winner === 'party'
-      ? `<h2>Victory</h2><h1>The Den is Cleared</h1><p>Grukk's war band lies broken after ${rounds} round${rounds > 1 ? 's' : ''}. ${standing.length === party.length ? 'Both heroes are still standing.' : `${standing.join(' and ')} stands among the bodies.`}</p>`
-      : `<h2>Defeat</h2><h1>The Goblins Feast</h1><p>Torvald and Nyx fall in the goblin den after ${rounds} round${rounds > 1 ? 's' : ''}. Grukk will be telling this story for years.</p>`;
+      ? `<h2>Victory</h2><h1>The Den is Cleared</h1><p>Grukk's war band lies broken after ${rounds} round${rounds > 1 ? 's' : ''}. ${standing.length === party.length ? 'The whole party is still standing.' : `${listNames(standing)} ${standing.length > 1 ? 'stand' : 'stands'} among the bodies.`}</p>`
+      : `<h2>Defeat</h2><h1>The Goblins Feast</h1><p>${listNames(party.map((c) => c.name))} fall in the goblin den after ${rounds} round${rounds > 1 ? 's' : ''}. Grukk will be telling this story for years.</p>`;
     setTimeout(() => this.hud.modal(html, [{ label: 'Play Again', onClick: () => this.restart() }]), 900);
   }
 }
@@ -690,6 +1073,10 @@ const MASTERY_TEXT: Record<string, string> = {
   graze: 'Graze: on a miss, you still deal damage equal to your ability modifier.',
   cleave: 'Cleave: on a hit, attack a second creature next to the first.',
 };
+
+function listNames(names: string[]): string {
+  return names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
 
 function formatDmg(a: AttackProfile): string {
   const t = a.damage.terms.map((x) => `${x.count}d${x.sides}`).join('+');

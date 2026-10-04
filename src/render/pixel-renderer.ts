@@ -417,6 +417,14 @@ export class PixelRenderer {
     this.renderer.render(this.postScene, this.postCam);
   }
 
+  /** Add a visual effect: it's lit and drawn but writes no normals (no outlines on glows). */
+  addFx(o: THREE.Object3D) { this.scene.add(o); this.noNormals.push(o); }
+  removeFx(o: THREE.Object3D) {
+    this.scene.remove(o);
+    const i = this.noNormals.indexOf(o); if (i >= 0) this.noNormals.splice(i, 1);
+    o.traverse((x) => { const m = x as THREE.Mesh; if (m.isMesh || (x as THREE.Points).isPoints) { m.geometry?.dispose(); const mat = m.material as THREE.Material; mat?.dispose?.(); } });
+  }
+
   floorY(x: number, y: number) { return this.map.floorY(x, y); }
   static readonly LEVEL = LEVEL;
 }

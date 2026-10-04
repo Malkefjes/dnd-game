@@ -10,12 +10,13 @@ export class Overlays {
   private reach = new THREE.Group();
   private path = new THREE.Group();
   private marks = new THREE.Group();
+  private areaG = new THREE.Group();
   private activeRing: THREE.Mesh;
   private hover: THREE.Mesh;
   private time = 0;
 
   constructor(private r: PixelRenderer) {
-    r.overlay.add(this.reach, this.path, this.marks);
+    r.overlay.add(this.reach, this.path, this.marks, this.areaG);
     this.activeRing = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.5, 40), additive(0xffd66b));
     this.activeRing.rotation.x = -Math.PI / 2; this.activeRing.visible = false;
     this.hover = new THREE.Mesh(new THREE.RingGeometry(0.38, 0.47, 4, 1), additive(0xffffff, 0.55));
@@ -67,10 +68,35 @@ export class Overlays {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.34, 32), mat); ring.rotation.x = -Math.PI / 2; ring.position.copy(end); this.path.add(ring);
   }
 
-  /** Red target brackets (or green for helping an ally). */
-  setTarget(p: P | null, friendly = false) {
+  /** Squares a spell would cover: tinted fill with a brighter outline. */
+  setArea(squares: P[] | null, color = 0xff8a3a) {
+    this.areaG.clear();
+    if (!squares || !squares.length) return;
+    const set = new Set(squares.map((t) => `${t.x},${t.y}`));
+    const fill = additive(color, 0.22), edge = additive(color, 0.95);
+    const quad = new THREE.PlaneGeometry(0.98, 0.98);
+    const w = 0.06;
+    const hStrip = new THREE.PlaneGeometry(1 + w, w), vStrip = new THREE.PlaneGeometry(w, 1 + w);
+    for (const t of squares) {
+      const yy = this.y(t.x, t.y) + 0.004;
+      const q = new THREE.Mesh(quad, fill); q.rotation.x = -Math.PI / 2; q.position.set(t.x, yy, t.y); this.areaG.add(q);
+      const add = (geo: THREE.PlaneGeometry, cx: number, cz: number) => { const m = new THREE.Mesh(geo, edge); m.rotation.x = -Math.PI / 2; m.position.set(cx, yy + 0.002, cz); this.areaG.add(m); };
+      if (!set.has(`${t.x},${t.y - 1}`)) add(hStrip, t.x, t.y - 0.5);
+      if (!set.has(`${t.x},${t.y + 1}`)) add(hStrip, t.x, t.y + 0.5);
+      if (!set.has(`${t.x - 1},${t.y}`)) add(vStrip, t.x - 0.5, t.y);
+      if (!set.has(`${t.x + 1},${t.y}`)) add(vStrip, t.x + 0.5, t.y);
+    }
+  }
+
+  /** Red target brackets (or green for helping an ally). Several targets can be marked at once. */
+  setTarget(p: P | P[] | null, friendly = false) {
     this.marks.clear();
     if (!p) return;
+    if (Array.isArray(p)) { for (const q of p) this.addTarget(q, friendly); return; }
+    this.addTarget(p, friendly);
+  }
+
+  private addTarget(p: P, friendly: boolean) {
     const mat = additive(friendly ? 0x7ee07a : 0xff4a3a);
     const yy = this.y(p.x, p.y);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.44, 0.52, 40), mat); ring.rotation.x = -Math.PI / 2; ring.position.set(p.x, yy + 0.003, p.y); this.marks.add(ring);
@@ -91,5 +117,5 @@ export class Overlays {
     if (p) this.hover.position.set(p.x, this.y(p.x, p.y) + 0.006, p.y);
   }
 
-  clearPlanning() { this.setPath(null); this.setTarget(null); this.setHover(null); }
+  clearPlanning() { this.setPath(null); this.setTarget(null); this.setHover(null); this.setArea(null); }
 }
