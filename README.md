@@ -5,23 +5,39 @@ A turn-based, single-player, isometric D&D combat game for the browser, built on
 
 **MVP:** a combat-focused dungeon crawl with a party of up to 4. You control every party member.
 
-## Status: Milestone 1 (in progress)
+**▶ Play it: https://malkefjes.github.io/dnd-game/** · [style mockups](https://malkefjes.github.io/dnd-game/mockups/)
+
+## Status: Milestone 1 (playable)
 
 Milestone 1 is a single encounter that should be genuinely fun: **Torvald** (Dwarf Fighter 2)
 and **Nyx** (Halfling Rogue 2) against a goblin war band in their den.
 
 | Part | State |
 |---|---|
-| Visual style mockups (4 options) | ✅ done, waiting for a style decision |
-| Rules engine (pure TypeScript, tested) | ✅ done |
-| Tactical enemy AI | ✅ done |
-| Playable game: renderer, input, animation, HUD | ⏳ next, once a style is picked |
+| Visual style: pixel art with real dynamic lighting, UI from mockup A | ✅ |
+| Rules engine (pure TypeScript, tested) | ✅ |
+| Tactical enemy AI | ✅ |
+| Playable game: renderer, input, animation, HUD | ✅ |
+| Deploy: GitHub Pages via Actions on every push | ✅ |
+
+### How it looks the way it does
+
+The dungeon and figures are real 3D (Three.js), lit by flickering, shadow-casting torches. The scene is rendered
+into a 1/3-resolution HDR target, then a single post pass applies filmic tone mapping, a limited palette with
+ordered dithering and depth-based outlines, and the result is upscaled with hard pixels. So it reads as pixel
+art, but the lighting is fully dynamic. The HUD is crisp DOM on top.
+
+### Controls
+
+Left click: move, or attack an enemy (auto-walks into range, warns about opportunity attacks) ·
+1–0: hotbar · right click / Esc: cancel · Space: end turn · WASD / right-drag: pan · wheel: zoom.
+URL options: `?seed=123` replays a specific fight, `?speed=3` speeds up animations.
 
 ## Running
 
 ```bash
 npm install
-npm run dev          # then open http://127.0.0.1:5173/ for the mockup gallery
+npm run dev          # game at http://127.0.0.1:5173/, mockups at /mockups/
 npm test             # rules + AI tests
 npx tsx tools/sim.ts      # 300 AI-vs-AI fights: win rate, length
 npx tsx tools/sim.ts 3    # play-by-play log of seed 3
@@ -32,10 +48,12 @@ npx tsx tools/sim.ts 3    # play-by-play log of seed 3
 ```
 src/engine/   rules engine: dice (seeded), grid + cover, combat state machine, AI
 src/data/     2024 content: weapons, heroes, monsters
-src/game/     encounters (maps + who stands where)
+src/game/     encounters + the game controller (input, turn flow, event animation)
+src/render/   pixel renderer, procedural models, ground overlays
+src/ui/       HUD (DOM)
 mockups/      the four visual-style mockups (Three.js / Canvas 2D)
 tests/        vitest suites
-tools/        screenshot + simulation scripts
+tools/        screenshot, simulation and headless playtest scripts
 ```
 
 The engine knows nothing about rendering. Every command (`move`, `attack`, `hide`, …) returns

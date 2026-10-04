@@ -16,7 +16,7 @@ export function torvald(): CreatureDef {
   const con = abilityMod(abilities.con);
   return {
     id: 'torvald', name: 'Torvald', side: 'party', controller: 'player', size: 'medium', pc: true,
-    description: 'Dwarf Fighter 2 (Soldier)',
+    description: 'Dwarf Fighter 2 (Soldier)', model: 'fighter',
     abilities, pb, level: 2,
     maxHp: 10 + 6 + 2 * con + 2,
     ac: 16 + 2 + 1,
@@ -48,7 +48,7 @@ export function nyx(): CreatureDef {
   const daggers = weaponAttacks(WEAPONS.dagger, { abilities, pb, mastery: false });
   return {
     id: 'nyx', name: 'Nyx', side: 'party', controller: 'player', size: 'small', pc: true,
-    description: 'Halfling Rogue 2 (Criminal)',
+    description: 'Halfling Rogue 2 (Criminal)', model: 'rogue',
     abilities, pb, level: 2, sneakAttackDice: 1,
     maxHp: 8 + 5 + 2 * abilityMod(abilities.con),
     ac: 11 + dex,

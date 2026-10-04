@@ -24,7 +24,7 @@ export function goblinDen(seed = Date.now()): Combat {
   combat.add(torvald(), { x: 2, y: 9 });
   combat.add(nyx(), { x: 1, y: 9 });
   combat.add(goblinWarrior('gob1'), { x: 7, y: 3 });
-  combat.add(goblinWarrior('gob2', 'Goblin Archer'), { x: 10, y: 2 });
+  combat.add({ ...goblinWarrior('gob2', 'Goblin Archer'), model: 'goblinArcher' }, { x: 10, y: 2 });
   combat.add(goblinMinion('gob3'), { x: 6, y: 5 });
   combat.add(goblinBoss('boss', 'Grukk the Boss'), { x: 10, y: 6 });
   return combat;

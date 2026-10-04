@@ -16,7 +16,7 @@ const GOBLIN_ABILITIES = { str: 8, dex: 15, con: 10, int: 10, wis: 8, cha: 8 };
 /** Goblin Warrior — Small Fey (Goblinoid), CR 1/4. */
 export function goblinWarrior(id: string, name = 'Goblin Warrior'): CreatureDef {
   return {
-    id, name, side: 'enemy', controller: 'ai', size: 'small', pc: false, cr: '1/4', xp: 50,
+    id, name, side: 'enemy', controller: 'ai', size: 'small', pc: false, cr: '1/4', xp: 50, model: 'goblin',
     abilities: GOBLIN_ABILITIES, pb: 2, maxHp: 10, ac: 15, speed: 30,
     saveProfs: [], skills: { stealth: 6, perception: -1 },
     attacks: [scimitar(), shortbow()], attacksPerAction: 1,
@@ -28,12 +28,12 @@ export function goblinWarrior(id: string, name = 'Goblin Warrior'): CreatureDef 
 /** Goblin Minion — Small Fey (Goblinoid), CR 1/8. */
 export function goblinMinion(id: string, name = 'Goblin Minion'): CreatureDef {
   const dagger: AttackProfile = { id: 'dagger', name: 'Dagger', kind: 'melee', reach: 5, toHit: 4, damage: parseDice('1d4+2'), damageType: 'piercing', ability: 'dex', abilityMod: 2, finesse: true, light: true, weapon: true };
-  const thrown: AttackProfile = { ...dagger, id: 'dagger-throw', name: 'Dagger (thrown)', kind: 'ranged', reach: 0, range: [20, 60] };
+  const thrown: AttackProfile = { ...dagger, id: 'dagger-throw', name: 'Dagger (thrown)', kind: 'ranged', reach: 0, range: [20, 60], consumes: 'dagger' };
   return {
-    id, name, side: 'enemy', controller: 'ai', size: 'small', pc: false, cr: '1/8', xp: 25,
+    id, name, side: 'enemy', controller: 'ai', size: 'small', pc: false, cr: '1/8', xp: 25, model: 'goblin',
     abilities: GOBLIN_ABILITIES, pb: 2, maxHp: 7, ac: 12, speed: 30,
     saveProfs: [], skills: { stealth: 6, perception: -1 },
-    attacks: [dagger, thrown], attacksPerAction: 1,
+    attacks: [dagger, thrown], attacksPerAction: 1, inventory: { dagger: 3 },
     features: ['nimbleEscape', 'darkvision'],
     description: 'Dagger. Nimble Escape: Disengage or Hide as a Bonus Action.',
   };
@@ -42,7 +42,7 @@ export function goblinMinion(id: string, name = 'Goblin Minion'): CreatureDef {
 /** Goblin Boss — Small Fey (Goblinoid), CR 1. Multiattack: two Scimitar/Shortbow attacks. */
 export function goblinBoss(id: string, name = 'Goblin Boss'): CreatureDef {
   return {
-    id, name, side: 'enemy', controller: 'ai', size: 'small', pc: false, cr: '1', xp: 200,
+    id, name, side: 'enemy', controller: 'ai', size: 'small', pc: false, cr: '1', xp: 200, model: 'goblinBoss',
     abilities: { ...GOBLIN_ABILITIES, str: 10, cha: 10 }, pb: 2, maxHp: 21, ac: 17, speed: 30,
     saveProfs: [], skills: { stealth: 6, perception: -1 },
     attacks: [scimitar(), shortbow()], attacksPerAction: 2,

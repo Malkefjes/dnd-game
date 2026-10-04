@@ -118,6 +118,8 @@ export interface CreatureDef {
   /** Player characters roll death saves; monsters die at 0 HP. */
   pc: boolean;
   description?: string;
+  /** Which 3D model the renderer uses. */
+  model?: string;
 }
 
 export interface Creature extends CreatureDef {

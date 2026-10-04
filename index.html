@@ -1,28 +1,12 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DnD Game — Style Mockups</title>
-<style>
-  :root { --bg: #14121a; --fg: #ece6da; --muted: #a59d8f; --card: #1f1c26; --line: #3a3443; --accent: #e8c26a; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
-  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px; }
-  h1 { font-weight: 600; margin: 0 0 4px; } p { color: var(--muted); margin: 0 0 24px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
-  a.card { display: block; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; color: inherit; text-decoration: none; }
-  a.card:hover { border-color: var(--accent); }
-  a.card img { width: 100%; display: block; aspect-ratio: 16/9; object-fit: cover; }
-  a.card div { padding: 10px 14px; font-weight: 600; }
-</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Goblin Den</title>
 </head>
-<body><main>
-  <h1>Visual style mockups</h1>
-  <p>The same combat moment in four styles. Click one to open the live page.</p>
-  <div class="grid">
-    <a class="card" href="mockups/minis.html"><img src="docs/mockups/minis.png" alt=""><div>A · Painted Miniatures</div></a>
-    <a class="card" href="mockups/toon.html"><img src="docs/mockups/toon.png" alt=""><div>B · Toon Diorama</div></a>
-    <a class="card" href="mockups/pixel.html"><img src="docs/mockups/pixel.png" alt=""><div>C · Pixel Art</div></a>
-    <a class="card" href="mockups/parchment.html"><img src="docs/mockups/parchment.png" alt=""><div>D · Ink &amp; Parchment</div></a>
-  </div>
-</main></body>
+<body>
+<div id="app"></div>
+<script type="module" src="./src/main.ts"></script>
+</body>
 </html>

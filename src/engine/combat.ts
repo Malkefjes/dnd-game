@@ -210,6 +210,13 @@ export class Combat {
     });
   }
 
+  /** Enemies that would make an opportunity attack if `c` walked this path (UI warnings, planning). */
+  provokersAlong(c: Creature, path: Pos[]): Creature[] {
+    const out = new Set<Creature>();
+    for (let i = 1; i < path.length; i++) for (const e of this.opportunityAttackers(c, path[i - 1], path[i])) out.add(e);
+    return [...out];
+  }
+
   meleeReach(c: Creature): number { return Math.max(0, ...c.attacks.filter((a) => a.kind === 'melee').map((a) => a.reach)); }
 
   // ------------------------------------------------------------ attack math
@@ -405,7 +412,9 @@ export class Combat {
     const res = this.reachable(c).get(posKey(to));
     if (!res) throw new RuleError(`${c.name} can't reach (${to.x}, ${to.y})`);
     const walked: Pos[] = [c.pos];
-    let spent = 0;
+    // the path is emitted in segments, split wherever an opportunity attack interrupts it
+    let seg: Pos[] = [c.pos], segCost = 0;
+    const flushSeg = () => { if (seg.length > 1) this.emit({ type: 'move', id: c.id, path: seg, cost: segCost }); seg = [c.pos]; segCost = 0; };
     for (let i = 1; i < res.path.length; i++) {
       const a = res.path[i - 1], b = res.path[i];
       // step cost recomputed so mid-move speed changes (Slow) are respected
@@ -413,9 +422,10 @@ export class Combat {
       const occ = this.creatureAt(b);
       if (occ && occ.id !== c.id && !this.grid.cell(b.x, b.y)!.difficult) step += 5;
       if (step > c.turn.movement) break;
-      for (const e of this.opportunityAttackers(c, a, b)) {
+      const provokers = this.opportunityAttackers(c, a, b).filter((e) => e.controller !== 'player' || this.autoReactions);
+      if (provokers.length) flushSeg();
+      for (const e of provokers) {
         if (!this.isConscious(c)) break;
-        if (e.controller === 'player' && !this.autoReactions) continue;
         const atk = this.bestMeleeAttack(e, c);
         if (!atk) continue;
         e.turn.reaction = false;
@@ -423,15 +433,14 @@ export class Combat {
         this.resolveAttack(e, atk.id, c, { opportunity: true });
       }
       if (!this.isConscious(c)) break;
-      // a mover can't end up in an occupied square because of an interrupted move
-      c.pos = b; c.turn.movement -= step; spent += step; walked.push(b);
+      c.pos = b; c.turn.movement -= step; segCost += step; walked.push(b); seg.push(b);
       this.revealCheck();
     }
-    // never leave a creature inside another one's space
+    // an interrupted move can't leave a creature inside another one's space: step back
     while (walked.length > 1 && this.creatures.some((o) => o.id !== c.id && this.isAlive(o) && samePos(o.pos, c.pos))) {
-      walked.pop(); c.pos = walked[walked.length - 1];
+      walked.pop(); c.pos = walked[walked.length - 1]; seg.push(c.pos);
     }
-    this.emit({ type: 'move', id: c.id, path: walked, cost: spent });
+    flushSeg();
   }
 
   /** The best melee attack `e` has against `t` (for Opportunity Attacks and AI). */

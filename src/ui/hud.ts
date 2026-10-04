@@ -1,0 +1,187 @@
+// DOM HUD in the "Painted Miniatures" style: crisp text over the pixel-art scene.
+import './hud.css';
+import { icon } from './icons';
+
+export interface InitEntry { id: string; name: string; side: 'party' | 'enemy'; initiative: number; hpFrac: number; dead: boolean; active: boolean; hidden: boolean }
+export interface PartyCard { id: string; name: string; hp: number; maxHp: number; status: string; active: boolean; dead: boolean; side: 'party' | 'enemy' }
+export interface Slot { key: string; icon: string; label: string; cost: 'action' | 'bonus' | 'free'; enabled: boolean; selected: boolean; uses?: number; tip: string }
+export interface HotbarState {
+  id: string; name: string; title: string; hp: number; maxHp: number; ac: number; side: 'party' | 'enemy';
+  actions: number; bonus: number; reaction: boolean; movement: number; speed: number; previewMove?: number;
+  slots: Slot[]; waiting: boolean;
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+
+export class Hud {
+  readonly root = document.createElement('div');
+  private initEl = el('div', 'initiative panel');
+  private partyEl = el('div', 'party');
+  private logEl = el('div', 'log panel interactive');
+  private logLines = el('div', 'log-lines');
+  private hotbarEl = el('div', 'hotbar panel interactive');
+  private tipEl = el('div', 'tip panel');
+  private tagEl = el('div', 'cursor-tag panel');
+  private slotTipEl = el('div', 'tip panel');
+  private plates = new Map<string, HTMLDivElement>();
+  onSlot: (key: string) => void = () => {};
+  onEndTurn: () => void = () => {};
+  onPartyClick: (id: string) => void = () => {};
+
+  constructor(private portraitFor: (id: string) => string | undefined) {
+    this.root.className = 'hud';
+    this.logEl.innerHTML = '<div class="panel-title">Combat Log</div>';
+    this.logEl.appendChild(this.logLines);
+    for (const e of [this.tipEl, this.tagEl, this.slotTipEl]) e.style.display = 'none';
+    this.root.append(this.initEl, this.partyEl, this.logEl, this.hotbarEl, this.tipEl, this.tagEl, this.slotTipEl);
+    document.body.appendChild(this.root);
+    this.hotbarEl.addEventListener('click', (ev) => {
+      const t = (ev.target as HTMLElement).closest<HTMLElement>('[data-slot]');
+      if (t && !t.classList.contains('disabled')) this.onSlot(t.dataset.slot!);
+      if ((ev.target as HTMLElement).closest('.end-turn')) this.onEndTurn();
+    });
+    this.hotbarEl.addEventListener('mouseover', (ev) => {
+      const t = (ev.target as HTMLElement).closest<HTMLElement>('[data-tip]');
+      if (!t) { this.slotTipEl.style.display = 'none'; return; }
+      this.slotTipEl.innerHTML = t.dataset.tip!;
+      this.slotTipEl.style.display = 'block';
+      const r = t.getBoundingClientRect();
+      this.slotTipEl.style.left = `${Math.min(innerWidth - 300, Math.max(10, r.left - 120))}px`;
+      this.slotTipEl.style.top = `${r.top - this.slotTipEl.offsetHeight - 10}px`;
+    });
+    this.hotbarEl.addEventListener('mouseleave', () => { this.slotTipEl.style.display = 'none'; });
+    this.partyEl.addEventListener('click', (ev) => {
+      const t = (ev.target as HTMLElement).closest<HTMLElement>('[data-id]');
+      if (t) this.onPartyClick(t.dataset.id!);
+    });
+  }
+
+  portrait(id: string, side: string, cls = '', dead = false): string {
+    const img = this.portraitFor(id);
+    return `<div class="portrait side-${side} ${cls} ${dead ? 'dead' : ''}">${img ? `<img src="${img}" alt="">` : ''}</div>`;
+  }
+
+  renderInitiative(entries: InitEntry[], round: number) {
+    this.initEl.innerHTML = `<div class="round">Round ${round}</div>` + entries.map((e) => `
+      <div class="init ${e.active ? 'active' : ''} ${e.dead ? 'gone' : ''}" title="${esc(e.name)} — initiative ${e.initiative}">
+        ${this.portrait(e.id, e.side, '', e.dead)}
+        <div class="init-hp"><div style="width:${e.hidden ? 100 : Math.round(e.hpFrac * 100)}%"></div></div>
+      </div>`).join('');
+  }
+
+  renderParty(cards: PartyCard[]) {
+    this.partyEl.innerHTML = cards.map((c) => `
+      <div class="party-card panel interactive ${c.active ? 'active' : ''}" data-id="${c.id}">
+        ${this.portrait(c.id, c.side, 'lg', c.dead)}
+        <div class="party-info">
+          <div class="pname">${esc(c.name)}</div>
+          ${hpBar(c.hp, c.maxHp)}
+          <div class="pstatus">${esc(c.status)}</div>
+        </div>
+      </div>`).join('');
+  }
+
+  renderHotbar(s: HotbarState | null, enemyTurnName?: string) {
+    this.hotbarEl.style.display = s || enemyTurnName ? 'flex' : 'none';
+    if (!s) {
+      this.hotbarEl.className = 'hotbar panel interactive waiting';
+      this.hotbarEl.innerHTML = `<div class="enemy-turn">${enemyTurnName ? `${esc(enemyTurnName)} is acting…` : '…'}</div>`;
+      return;
+    }
+    const movePct = Math.round((s.movement / Math.max(1, s.speed)) * 100);
+    const prevPct = s.previewMove !== undefined ? Math.round((Math.max(0, s.movement - s.previewMove) / Math.max(1, s.speed)) * 100) : movePct;
+    const slots = s.slots.map((sl, i) => `
+      <div class="slot cost-${sl.cost} ${sl.enabled ? '' : 'disabled'} ${sl.selected ? 'selected' : ''}" data-slot="${sl.key}" data-tip="${esc(sl.tip)}">
+        ${icon(sl.icon, 27)}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}<span class="key">${i < 9 ? i + 1 : i === 9 ? 0 : ''}</span>
+      </div>`).join('');
+    this.hotbarEl.className = `hotbar panel interactive ${s.waiting ? 'waiting' : ''}`;
+    this.hotbarEl.innerHTML = `
+      <div class="active-info">
+        ${this.portrait(s.id, s.side, 'xl')}
+        <div>
+          <div class="aname">${esc(s.name)}</div>
+          <div class="atitle">${esc(s.title)} · AC ${s.ac}</div>
+          ${hpBar(s.hp, s.maxHp)}
+        </div>
+      </div>
+      <div class="hotbar-main">
+        <div class="economy">
+          ${'<span class="pip action on" title="Action"></span>'.repeat(Math.max(1, s.actions)).replace(/ on/g, s.actions > 0 ? ' on' : '')}<span class="lbl">Action</span>
+          <span class="pip bonus ${s.bonus > 0 ? 'on' : ''}" title="Bonus Action"></span><span class="lbl">Bonus</span>
+          <span class="pip reaction ${s.reaction ? 'on' : ''}" title="Reaction"></span><span class="lbl">Reaction</span>
+          <div class="move" title="Movement"><div class="move-fill" style="width:${movePct}%"></div><div class="move-preview" style="left:${prevPct}%; width:${movePct - prevPct}%"></div><span>${s.movement} / ${s.speed} ft</span></div>
+        </div>
+        <div class="slots">${slots}</div>
+      </div>
+      <div class="end-turn" data-tip="End your turn. <i>(Space)</i>">${icon('hourglass', 21)}<span>End Turn</span></div>`;
+  }
+
+  log(text: string, tone = 'info') {
+    const d = el('div', `log-line ${tone}`); d.textContent = text;
+    this.logLines.appendChild(d);
+    while (this.logLines.children.length > 200) this.logLines.firstChild!.remove();
+    this.logLines.scrollTop = this.logLines.scrollHeight;
+  }
+
+  tooltip(html: string | null, x = 0, y = 0) {
+    if (!html) { this.tipEl.style.display = 'none'; return; }
+    this.tipEl.innerHTML = html;
+    this.tipEl.style.display = 'block';
+    const w = this.tipEl.offsetWidth, h = this.tipEl.offsetHeight;
+    let left = x + 24, top = y - h - 8;
+    if (left + w > innerWidth - 10) left = x - w - 24;
+    if (top < 90) top = y + 24;
+    this.tipEl.style.left = `${left}px`; this.tipEl.style.top = `${top}px`;
+  }
+
+  cursorTag(text: string | null, x = 0, y = 0, warn = false) {
+    if (!text) { this.tagEl.style.display = 'none'; return; }
+    this.tagEl.textContent = text;
+    this.tagEl.className = `cursor-tag panel ${warn ? 'warn' : ''}`;
+    this.tagEl.style.display = 'block';
+    this.tagEl.style.left = `${x}px`; this.tagEl.style.top = `${y - 14}px`;
+  }
+
+  float(x: number, y: number, text: string, cls: string, delay = 0) {
+    const d = el('div', `float ${cls}`); d.textContent = text;
+    d.style.left = `${x}px`; d.style.top = `${y}px`; d.style.animationDelay = `${delay}s`; d.style.opacity = '0';
+    this.root.appendChild(d);
+    setTimeout(() => d.remove(), 1400 + delay * 1000);
+  }
+
+  banner(text: string, enemy = false) {
+    const d = el('div', `banner ${enemy ? 'enemy' : ''}`); d.textContent = text;
+    this.root.appendChild(d); setTimeout(() => d.remove(), 1500);
+  }
+
+  plate(id: string, side: string, x: number, y: number, hpFrac: number, icons: string, visible: boolean) {
+    let p = this.plates.get(id);
+    if (!p) { p = el('div', `plate ${side}`) as HTMLDivElement; p.innerHTML = '<div class="icons"></div><div class="bar"><div></div></div>'; this.root.insertBefore(p, this.initEl); this.plates.set(id, p); }
+    p.style.display = visible ? 'block' : 'none';
+    if (!visible) return;
+    p.style.left = `${x}px`; p.style.top = `${y}px`;
+    (p.lastElementChild!.firstElementChild as HTMLElement).style.width = `${Math.round(hpFrac * 100)}%`;
+    const ic = p.firstElementChild as HTMLElement;
+    if (ic.textContent !== icons) ic.textContent = icons;
+  }
+
+  modal(html: string, buttons: { label: string; secondary?: boolean; onClick: () => void }[]): () => void {
+    const back = el('div', 'modal-back');
+    const box = el('div', 'modal panel'); box.innerHTML = html;
+    const row = el('div', '');
+    for (const b of buttons) {
+      const btn = el('button', `btn ${b.secondary ? 'secondary' : ''}`); btn.textContent = b.label;
+      btn.addEventListener('click', () => { close(); b.onClick(); });
+      row.appendChild(btn);
+    }
+    box.appendChild(row); back.appendChild(box); document.body.appendChild(back);
+    const close = () => back.remove();
+    return close;
+  }
+}
+
+function el(tag: string, cls: string): HTMLElement { const e = document.createElement(tag); e.className = cls; return e; }
+export function hpBar(hp: number, max: number): string {
+  return `<div class="hp"><div class="fill" style="width:${Math.round((hp / max) * 100)}%"></div><span>${hp} / ${max}</span></div>`;
+}
+export { esc };

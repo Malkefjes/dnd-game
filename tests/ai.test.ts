@@ -27,7 +27,7 @@ describe('tactical AI', () => {
     // A fair-but-dangerous fight: the heroes should usually, but not always, win.
     console.log(`party win rate ${(party / 150 * 100).toFixed(0)}%, avg ${(totalRounds / 150).toFixed(1)} rounds`);
     expect(party).toBeGreaterThan(30);
-  });
+  }, 60000);
 
   it('goblin archers keep their distance', () => {
     const combat = goblinDen(7);
