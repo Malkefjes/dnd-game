@@ -20,6 +20,15 @@ export interface HotbarState {
   picker?: { title: string; options: { key: string; label: string; selected: boolean; enabled: boolean }[] };
 }
 
+/** Names that don't fit under a hotbar icon, shortened. */
+const SHORT: Record<string, string> = {
+  'Protection from Evil and Good': 'Protection from Evil', 'Breath Weapon (cone)': 'Breath (cone)', 'Breath Weapon (line)': 'Breath (line)',
+  'Off-hand Attack': 'Off-hand',
+};
+export const shortName = (label: string) => SHORT[label] ?? label.replace(' (two hands)', ' (2H)').replace(' (thrown)', ' (throw)');
+
+const LABELS_KEY = 'hollow-abbey-hotbar-labels';
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 export class Hud {
@@ -33,12 +42,16 @@ export class Hud {
   private tagEl = el('div', 'cursor-tag panel');
   private slotTipEl = el('div', 'tip panel');
   private plates = new Map<string, HTMLDivElement>();
+  /** Show each hotbar button's name under its icon (L toggles; remembered in this browser). */
+  labels = true;
+  private lastHotbar: [HotbarState | null, string | undefined] = [null, undefined];
   onSlot: (key: string) => void = () => {};
   onEndTurn: () => void = () => {};
   onPartyClick: (id: string) => void = () => {};
 
   constructor(private portraitFor: (id: string) => string | undefined) {
     this.root.className = 'hud';
+    try { this.labels = localStorage.getItem(LABELS_KEY) !== 'off'; } catch { /* storage blocked: keep the default */ }
     this.logEl.innerHTML = '<div class="panel-title">Combat Log</div>';
     this.logEl.appendChild(this.logLines);
     for (const e of [this.tipEl, this.tagEl, this.slotTipEl]) e.style.display = 'none';
@@ -49,6 +62,7 @@ export class Hud {
     scale(); addEventListener('resize', scale);
     this.hotbarEl.addEventListener('click', (ev) => {
       const t = (ev.target as HTMLElement).closest<HTMLElement>('[data-slot]');
+      if ((ev.target as HTMLElement).closest('.label-toggle')) { this.toggleLabels(); return; }
       if (t && !t.classList.contains('disabled')) this.onSlot(t.dataset.slot!);
       if ((ev.target as HTMLElement).closest('.end-turn')) this.onEndTurn();
     });
@@ -99,7 +113,14 @@ export class Hud {
       </div>`).join('');
   }
 
+  toggleLabels() {
+    this.labels = !this.labels;
+    try { localStorage.setItem(LABELS_KEY, this.labels ? 'on' : 'off'); } catch { /* not remembered */ }
+    this.renderHotbar(...this.lastHotbar);
+  }
+
   renderHotbar(s: HotbarState | null, enemyTurnName?: string) {
+    this.lastHotbar = [s, enemyTurnName];
     this.hotbarEl.style.display = s || enemyTurnName ? 'flex' : 'none';
     if (!s) {
       this.hotbarEl.className = 'hotbar panel interactive waiting';
@@ -110,7 +131,7 @@ export class Hud {
     const prevPct = s.previewMove !== undefined ? Math.round((Math.max(0, s.movement - s.previewMove) / Math.max(1, s.speed)) * 100) : movePct;
     const slotHtml = (list: Slot[], prefix: string, extra = '') => list.map((sl, i) => `
       <div class="slot ${extra} cost-${sl.cost} ${sl.enabled ? '' : 'disabled'} ${sl.selected ? 'selected' : ''}" data-slot="${sl.key}" data-tip="${esc(sl.tip)}">
-        ${icon(sl.icon, 26)}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}${i < 10 ? `<span class="key">${prefix}${(i + 1) % 10}</span>` : ''}
+        ${icon(sl.icon, this.labels ? 21 : 26)}${this.labels ? `<span class="name">${esc(shortName(sl.label))}</span>` : ''}${sl.uses !== undefined ? `<span class="uses">${sl.uses}</span>` : ''}${i < 10 ? `<span class="key">${prefix}${(i + 1) % 10}</span>` : ''}
       </div>`).join('');
     const slots = slotHtml(s.slots, '');
     const spells = s.spells?.length ? `<div class="slots spells">${slotHtml(s.spells, '⇧', 'spell')}</div>` : '';
@@ -119,7 +140,7 @@ export class Hud {
     const pips = s.pips?.length ? `<span class="spell-pips" title="Spell slots">${s.pips.map((p) => `<span class="lvl">${roman[p.level]}</span>${'<i class="on"></i>'.repeat(p.left)}${'<i></i>'.repeat(Math.max(0, p.max - p.left))}`).join('')}</span>` : '';
     const conc = s.concentration ? `<span class="conc" title="Concentrating">◈ ${esc(s.concentration)}</span>` : '';
     const picker = s.picker ? `<div class="picker panel"><span class="ptitle">${esc(s.picker.title)}</span>${s.picker.options.map((o) => `<button class="pick ${o.selected ? 'selected' : ''} ${o.enabled ? '' : 'disabled'}" data-slot="${o.key}">${esc(o.label)}</button>`).join('')}</div>` : '';
-    this.hotbarEl.className = `hotbar panel interactive ${s.waiting ? 'waiting' : ''}`;
+    this.hotbarEl.className = `hotbar panel interactive ${s.waiting ? 'waiting' : ''} ${this.labels ? 'labeled' : ''}`;
     this.hotbarEl.innerHTML = `
       <div class="active-info">
         ${this.portrait(s.id, s.side, 'xl')}
@@ -137,7 +158,7 @@ export class Hud {
           <div class="move" title="Movement"><div class="move-fill" style="width:${movePct}%"></div><div class="move-preview" style="left:${prevPct}%; width:${movePct - prevPct}%"></div><span>${s.movement} / ${s.speed} ft</span></div>
           ${pips}${conc}
         </div>`}
-        <div class="slot-row">${rowLabel('Act', 'Keys 1–0')}<div class="slots">${slots}</div></div>
+        <div class="slot-row">${rowLabel('Act', 'Keys 1–0')}<div class="slots">${slots}</div><button class="label-toggle" data-tip="${this.labels ? 'Hide' : 'Show'} the names under the buttons. <i>(L)</i>">${this.labels ? 'Aa' : 'Aa'}</button></div>
         ${spells ? `<div class="slot-row">${rowLabel('Spell', 'Shift + 1–0')}${spells}</div>` : ''}
       </div>
       ${picker}

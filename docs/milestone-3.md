@@ -57,18 +57,19 @@ size on a real GPU (the owner checks on Pages).
       equipment + spells → a `CreatureDef`. Torvald, Nyx, Maren and Elowen become saved sets of choices, so the old
       tests keep passing. *(Done: `src/data/build/`; `tests/builder.test.ts` checks the rebuilt heroes against the
       old hand-written ones, kept in `tests/fixtures/legacy-heroes.ts`. The data and builder cover everything below;
-      the engine rules for the new traits, feats and the Paladin come next, then the creator screens.)*
-- [ ] **Species (2024 PHB):** Aasimar, Dragonborn, Dwarf, Elf (Drow, High, Wood), Gnome, Goliath, Halfling, Human,
+      the engine plays the new traits, feats and the Paladin; the creator screens are next. Not in yet: Lucky,
+      Tavern Brawler's push, the Crafter and Musician feats, Large Form and the level 3+ lineage spells.)*
+- [x] **Species (2024 PHB):** Aasimar, Dragonborn, Dwarf, Elf (Drow, High, Wood), Gnome, Goliath, Halfling, Human,
       Orc, Tiefling (Abyssal, Chthonic, Infernal). Every trait that matters in a fight: Darkvision, resistances,
       breath weapons, Healing Hands, Relentless Endurance, Adrenaline Rush, Stone's Endurance, Large Form, the
       lineage spells.
-- [ ] **All 16 backgrounds:** ability increases (+2 / +1, or +1 / +1 / +1, among the background's three), skill
+- [x] **All 16 backgrounds:** ability increases (+2 / +1, or +1 / +1 / +1, among the background's three), skill
       proficiencies and origin feat.
-- [ ] **Origin feats:** Alert, Healer, Lucky, Magic Initiate (cleric / wizard lists), Savage Attacker, Skilled,
+- [x] **Origin feats:** Alert, Healer, Lucky, Magic Initiate (cleric / wizard lists), Savage Attacker, Skilled,
       Tavern Brawler and Tough are implemented. Crafter and Musician only work out of combat, so they're
       listed but do nothing yet.
-- [ ] **Ability scores:** standard array, point buy (27 points) and 4d6-drop-lowest.
-- [ ] **Class choices:** skills, Fighting Style, Weapon Mastery picks, Expertise, cantrips and prepared spells, and
+- [x] **Ability scores:** standard array, point buy (27 points) and 4d6-drop-lowest.
+- [x] **Class choices:** skills, Fighting Style, Weapon Mastery picks, Expertise, cantrips and prepared spells, and
       Divine Order (Protector or Thaumaturge).
 
 **The UI side**, in the painted-miniatures style:

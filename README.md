@@ -54,7 +54,8 @@ the game uses, keeps the shared animations in one file, and quantises the meshes
 
 Left click: move, or attack an enemy (auto-walks into range, warns about opportunity attacks) ·
 1–0: hotbar · Shift + 1–0: spells (pick the slot level above the hotbar to upcast) · right click / Esc: cancel ·
-Space: end turn (or cast a multi-target spell early) · Y / N: answer reaction prompts · WASD / right-drag: pan · wheel: zoom.
+Space: end turn (or cast a multi-target spell early) · Y / N: answer reaction prompts (Divine Smite offers its slot levels) ·
+L: show or hide the names under the hotbar buttons · WASD / right-drag: pan · wheel: zoom.
 URL options: `?seed=123` replays a specific fight, `?speed=3` speeds up animations, `?level=2` plays the party at level 2.
 
 ## Running

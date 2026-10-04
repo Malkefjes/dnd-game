@@ -220,6 +220,7 @@ export class World {
       h.slotsLeft = [...c.slotsLeft];
       h.resourcesLeft = { ...c.resourcesLeft };
       h.inv = { ...c.inv };
+      h.tempHp = c.tempHp;
       h.conditions = c.conditions.filter((k) => LASTING.includes(k.id)).map((k) => ({ ...k }));
       h.pos = { ...c.pos };
     }

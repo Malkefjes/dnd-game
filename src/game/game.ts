@@ -138,6 +138,7 @@ export class Game {
     addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || document.querySelector('.modal-back')) return;
       this.keys.add(e.key.toLowerCase());
+      if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey) { this.hud.toggleLabels(); return; }
       if (this.view) { this.view.handleKey(e); return; }
       if (e.key === 'Tab') { e.preventDefault(); this.cycleSelected(e.shiftKey ? -1 : 1); }
     });

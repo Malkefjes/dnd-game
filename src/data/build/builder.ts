@@ -201,7 +201,7 @@ export function buildCharacter(c: Choices, level: number): CreatureDef {
     // Unarmed Strike with Tavern Brawler: 1d4 + STR bludgeoning (the 1s reroll lives in the engine)
     attacks.push({
       id: 'unarmed', name: 'Unarmed Strike', kind: 'melee', reach: 5, toHit: mod('str') + pb, damage: parseDice(`1d4${mod('str') >= 0 ? '+' : ''}${mod('str')}`),
-      damageType: 'bludgeoning', ability: 'str', abilityMod: mod('str'), weapon: false,
+      damageType: 'bludgeoning', ability: 'str', abilityMod: mod('str'), weapon: false, unarmed: true,
     });
   }
 

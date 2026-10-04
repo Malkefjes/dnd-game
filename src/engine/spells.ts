@@ -4,7 +4,7 @@
 // handled here by spell id.
 import { averageDice, hitChance, parseDice, rollDice, scaleDice, type DiceExpr } from './dice';
 import { computeCover, distanceFt, samePos, type Pos } from './grid';
-import { abilityMod, type AttackProfile, type Creature, type SpellDef, type Summon } from './types';
+import { abilityMod, type Ability, type AttackProfile, type Creature, type SpellDef, type Summon } from './types';
 import { RuleError, type Combat, type Command } from './combat';
 
 // ---------------------------------------------------------------- lookups
@@ -17,8 +17,24 @@ export function spellOf(c: Creature, id: string): SpellDef {
 
 export function knows(c: Creature, id: string): boolean { return !!c.spellcasting?.spells.some((x) => x.id === id); }
 
-/** Spellcasting ability modifier. */
-export function castingMod(c: Creature): number { return c.spellcasting ? abilityMod(c.abilities[c.spellcasting.ability]) : 0; }
+/** Spellcasting ability modifier (of the spell's own ability for Magic Initiate and species spells). */
+export function castingMod(c: Creature, spell?: SpellDef): number {
+  const a = spell?.castWith?.ability ?? c.spellcasting?.ability;
+  return a ? abilityMod(c.abilities[a]) : 0;
+}
+
+/** Save DC and attack bonus a spell is cast with. */
+export function spellStats(c: Creature, spell: SpellDef): { ability: Ability; dc: number; attack: number } {
+  if (spell.castWith) return spell.castWith;
+  const b = c.spellcasting!;
+  return { ability: b.ability, dc: b.dc, attack: b.attack };
+}
+
+/** The level a spell takes effect at: its slot, or its own level when cast for free (slot 0). */
+export function castLevel(spell: SpellDef, slot: number): number { return spell.level === 0 ? 0 : Math.max(slot, spell.level); }
+
+/** Creature types Protection from Evil and Good wards against. */
+export const OTHERWORLDLY = ['aberration', 'celestial', 'elemental', 'fey', 'fiend', 'undead'];
 
 /** Cantrip damage dice multiply at character levels 5, 11 and 17. */
 function cantripMultiplier(c: Creature): number { const l = c.level ?? 1; return l >= 17 ? 4 : l >= 11 ? 3 : l >= 5 ? 2 : 1; }
@@ -37,7 +53,7 @@ export function spellDamage(c: Creature, spell: SpellDef, slot: number, target?:
   const scaled = spell.level === 0 && !spell.uses
     ? scaleDice(base, { multiply: cantripMultiplier(c) })
     : scaleDice(base, { per: d.upcast ? parseDice(d.upcast) : undefined, extra: Math.max(0, slot - spell.level) });
-  return d.addMod ? { terms: scaled.terms, bonus: scaled.bonus + castingMod(c) } : scaled;
+  return d.addMod ? { terms: scaled.terms, bonus: scaled.bonus + castingMod(c, spell) } : scaled;
 }
 
 export function spellHealing(c: Creature, spell: SpellDef, slot: number): DiceExpr {
@@ -45,24 +61,29 @@ export function spellHealing(c: Creature, spell: SpellDef, slot: number): DiceEx
   const scaled = scaleDice(parseDice(h.dice), { per: h.upcast ? parseDice(h.upcast) : undefined, extra: Math.max(0, slot - spell.level) });
   // Disciple of Life (Life Domain): a spell cast with a slot that restores HP adds 2 + the slot's level
   const disciple = c.features.includes('discipleOfLife') && slot > 0 ? 2 + slot : 0;
-  return { terms: scaled.terms, bonus: scaled.bonus + (h.addMod ? castingMod(c) : 0) + disciple };
+  return { terms: scaled.terms, bonus: scaled.bonus + (h.addMod ? castingMod(c, spell) : 0) + disciple };
 }
 
 /** A spell attack as an AttackProfile, so it goes through the normal attack pipeline. */
 export function spellAttackProfile(c: Creature, spell: SpellDef, slot: number, target?: Creature): AttackProfile {
   const melee = spell.attack === 'melee';
+  const st = spellStats(c, spell);
   return {
     id: spell.id, name: spell.name, kind: melee ? 'melee' : 'ranged', reach: melee ? Math.max(5, spell.range) : 0,
-    range: melee ? undefined : [spell.range, spell.range], toHit: c.spellcasting!.attack,
-    damage: spellDamage(c, spell, slot, target), damageType: spell.damage!.type, ability: c.spellcasting!.ability, abilityMod: castingMod(c),
+    range: melee ? undefined : [spell.range, spell.range], toHit: st.attack,
+    damage: spellDamage(c, spell, slot, target), damageType: spell.damage!.type, ability: st.ability, abilityMod: castingMod(c, spell),
     weapon: false, spell: spell.id, cantrip: spell.level === 0 && !spell.uses,
   };
 }
 
-/** Slot levels this spell can be cast with right now ([0] for cantrips and Channel Divinity). */
+/**
+ * Slot levels this spell can be cast with right now ([0] for cantrips and Channel Divinity). For a
+ * leveled spell, 0 means its free casting (Magic Initiate, Paladin's Smite), offered first.
+ */
 export function slotOptions(c: Creature, spell: SpellDef): number[] {
   if (spell.level === 0) return [0];
   const out: number[] = [];
+  if (spell.free && (c.resourcesLeft[spell.free] ?? 0) > 0) out.push(0);
   for (let l = spell.level; l < c.slotsLeft.length; l++) if ((c.slotsLeft[l] ?? 0) > 0) out.push(l);
   return out;
 }
@@ -70,20 +91,29 @@ export function slotOptions(c: Creature, spell: SpellDef): number[] {
 /** Why the spell can't be cast at all right now (economy, slots), or null. Targets are checked separately. */
 export function castBlocker(combat: Combat, c: Creature, spell: SpellDef, slot: number): string | null {
   if (spell.time === 'reaction') return 'Cast as a Reaction when you are hit';
+  if (spell.time === 'onHit') return 'You\'ll be asked right after you hit';
   if (spell.utility) return 'No use in a fight';
-  // Breath Weapon, Sacred Weapon and Divine Smite get their own timing rules with the Paladin's engine work
-  if (spell.time === 'attack' || spell.time === 'onHit') return 'Not playable yet';
   if (spell.consumes && (c.inv[spell.consumes] ?? 0) <= 0) return `Needs ${spell.consumes === 'holyWater' ? 'a flask of Holy Water' : spell.consumes}`;
   if (combat.cond(c, 'incapacitated')) return 'Incapacitated';
   if (spell.time === 'action' && c.turn.actions <= 0) return 'No action left';
   if (spell.time === 'bonus' && c.turn.bonusActions <= 0) return 'Bonus Action already used';
-  if (spell.uses) return (c.resourcesLeft[spell.uses] ?? 0) > 0 ? null : 'No Channel Divinity left';
+  // part of the Attack action: in the middle of one, or starting one
+  if (spell.time === 'attack' && c.turn.attacksLeft <= 0 && c.turn.actions <= 0) return 'No attack left';
+  if (spell.id === 'sacredWeapon' && combat.cond(c, 'sacredWeapon')) return 'Already active';
+  if (spell.id === 'divineFavor' && combat.cond(c, 'favored')) return 'Already active';
+  if (spell.uses) return (c.resourcesLeft[spell.uses] ?? 0) > 0 ? null : `No ${USES_NAME[spell.uses] ?? 'uses'} left`;
   if (spell.level === 0) return slot === 0 ? null : 'Cantrips use no slot';
+  if (slot === 0) return spell.free && (c.resourcesLeft[spell.free] ?? 0) > 0 ? null : 'The free casting is used up';
   if (slot < spell.level || (c.slotsLeft[slot] ?? 0) <= 0) return `No level ${slot} spell slot left`;
   // 2024: on a turn you can expend only one spell slot to cast a spell
   if (combat.usedThisTurn(c, 'spellSlot')) return 'Only one spell slot per turn';
   return null;
 }
+
+const USES_NAME: Record<string, string> = {
+  channelDivinity: 'Channel Divinity', layOnHands: 'Lay on Hands', healingHands: 'Healing Hands', giantAncestry: 'Giant Ancestry',
+  adrenalineRush: 'Adrenaline Rush', breathWeapon: 'Breath Weapon',
+};
 
 // ---------------------------------------------------------------- targeting
 
@@ -109,6 +139,21 @@ export function areaSquares(combat: Combat, caster: Creature, spell: SpellDef, a
       if (!dx && !dy) continue;
       const ang = Math.acos(Math.max(-1, Math.min(1, (dx * dx0 + dy * dy0) / (Math.hypot(dx, dy) * len0))));
       if (ang > half) continue;
+      const p = { x: from.x + dx, y: from.y + dy };
+      const cell = g.cell(p.x, p.y);
+      if (cell && !cell.blocksSight && computeCover(g, from, p) !== 'total') out.push(p);
+    }
+  } else if (shape.kind === 'line') {
+    // A 5-ft-wide line from the caster towards the aim point: the squares whose centres lie within half a
+    // square of the line's axis, up to its length.
+    const L = shape.length / 5;
+    const dx0 = aim.x - from.x, dy0 = aim.y - from.y, len0 = Math.hypot(dx0, dy0);
+    if (!len0) return out;
+    const ux = dx0 / len0, uy = dy0 / len0;
+    for (let dy = -L; dy <= L; dy++) for (let dx = -L; dx <= L; dx++) {
+      if (!dx && !dy) continue;
+      const along = dx * ux + dy * uy, across = Math.abs(dx * uy - dy * ux);
+      if (along <= 0 || along > L + 0.01 || across > 0.5 + 0.01) continue;
       const p = { x: from.x + dx, y: from.y + dy };
       const cell = g.cell(p.x, p.y);
       if (cell && !cell.blocksSight && computeCover(g, from, p) !== 'total') out.push(p);
@@ -148,7 +193,10 @@ export function targetError(combat: Combat, caster: Creature, spell: SpellDef, t
     if (cover === 'total') return `No line of sight to ${t.name}`;
   }
   if (spell.id === 'spiritualWeapon' && !weaponSpot(combat, caster, t, from)) return 'No room for the weapon next to it';
-  if (spell.heal && !spell.damage && t.hp >= t.maxHp) return `${t.name} is unhurt`;
+  if ((spell.heal || spell.id === 'layOnHands') && !spell.damage && t.hp >= t.maxHp) return `${t.name} is unhurt`;
+  if (spell.id === 'spareTheDying' && (t.hp > 0 || combat.cond(t, 'stable'))) return `${t.name} isn't dying`;
+  if (spell.id === 'heroism' && combat.cond(t, 'heroism')) return `${t.name} is already heroic`;
+  if (spell.id === 'protectionFromEvilAndGood' && combat.cond(t, 'warded')) return `${t.name} is already warded`;
   if (spell.id === 'aid' && combat.cond(t, 'aided')) return `${t.name} already has Aid`;
   if (spell.id === 'bless' && combat.cond(t, 'blessed')) return `${t.name} is already Blessed`;
   if (spell.id === 'shieldOfFaith' && combat.cond(t, 'shieldOfFaith')) return 'Already shielded by faith';
@@ -159,7 +207,7 @@ export function targetError(combat: Combat, caster: Creature, spell: SpellDef, t
 export function pointError(combat: Combat, caster: Creature, spell: SpellDef, p: Pos, from: Pos = caster.pos): string | null {
   const cell = combat.grid.cell(p.x, p.y);
   if (!cell) return 'Off the map';
-  if (spell.shape.kind === 'cone') return samePos(p, from) ? 'Aim away from yourself' : null;
+  if (spell.shape.kind === 'cone' || spell.shape.kind === 'line') return samePos(p, from) ? 'Aim away from yourself' : null;
   if (distanceFt(from, p) > spell.range) return `Out of range (${spell.range} ft)`;
   if (computeCover(combat.grid, from, p) === 'total') return 'No line of sight';
   if (spell.shape.kind === 'point') {
@@ -196,7 +244,7 @@ export function weaponSpot(combat: Combat, caster: Creature, t: Creature, from: 
 export function failChance(combat: Combat, t: Creature, ability: Creature['saveProfs'][number], dc: number): number {
   if (combat.cond(t, 'unconscious') && (ability === 'str' || ability === 'dex')) return 1;
   const mod = combat.saveMod(t, ability) + (combat.cond(t, 'blessed') ? 2.5 : 0);
-  const mode = ability === 'dex' && combat.cond(t, 'dodging') ? 'advantage' : 'normal';
+  const mode = (ability === 'dex' && combat.cond(t, 'dodging')) || ((ability === 'int' || ability === 'wis' || ability === 'cha') && combat.has(t, 'gnomishCunning')) ? 'advantage' : 'normal';
   return 1 - hitChance(Math.round(mod), dc, mode, false);
 }
 
@@ -210,7 +258,7 @@ export function expectedSpellDamage(combat: Combat, caster: Creature, spell: Spe
   }
   if (spell.save) {
     const avg = averageDice(spellDamage(caster, spell, slot, t));
-    const fail = failChance(combat, t, spell.save, caster.spellcasting!.dc);
+    const fail = failChance(combat, t, spell.save, spellStats(caster, spell).dc);
     const onSave = spell.half ? 0.5 : spell.level === 0 && !spell.uses && combat.has(caster, 'potentCantrip') ? 0.5 : 0;
     return avg * (fail + (1 - fail) * onSave);
   }
@@ -250,9 +298,11 @@ function nameOf(c: Creature, id: string): string { return c.spellcasting?.spells
 
 export function castSpell(combat: Combat, c: Creature, cmd: Extract<Command, { type: 'cast' }>) {
   const spell = spellOf(c, cmd.spell);
-  const slot = spell.level === 0 ? 0 : cmd.slot;
-  const why = castBlocker(combat, c, spell, slot);
+  const paid = spell.level === 0 ? 0 : cmd.slot;
+  const why = castBlocker(combat, c, spell, paid);
   if (why) throw new RuleError(why);
+  // a free casting takes effect at the spell's own level
+  const slot = castLevel(spell, paid);
 
   // validate targets before anything is spent
   const ids = cmd.targets ?? [];
@@ -265,7 +315,7 @@ export function castSpell(combat: Combat, c: Creature, cmd: Extract<Command, { t
     if (targets.length > max) throw new RuleError(`At most ${max} target${max > 1 ? 's' : ''}`);
     if (shape.kind === 'multi' && !shape.repeat && new Set(ids).size !== ids.length) throw new RuleError('Each target only once');
     for (const t of targets) { const e = targetError(combat, c, spell, t); if (e) throw new RuleError(e); }
-  } else if (shape.kind === 'sphere' || shape.kind === 'cone' || shape.kind === 'point') {
+  } else if (shape.kind === 'sphere' || shape.kind === 'cone' || shape.kind === 'line' || shape.kind === 'point') {
     if (!cmd.point) throw new RuleError('Pick a point');
     const e = pointError(combat, c, spell, cmd.point);
     if (e) throw new RuleError(e);
@@ -274,11 +324,17 @@ export function castSpell(combat: Combat, c: Creature, cmd: Extract<Command, { t
 
   // pay for it
   if (spell.time === 'action') combat.spend(c, 'action', 'Magic');
-  else combat.useBonus(c, spell.name);
-  if (spell.uses) {
-    c.resourcesLeft[spell.uses]--;
-    combat.emit({ type: 'resource', id: c.id, resource: spell.uses, left: c.resourcesLeft[spell.uses] });
-  } else if (slot > 0) spendSlot(combat, c, slot);
+  else if (spell.time === 'attack') {
+    // part of the Attack action (starting one if needed). A Breath Weapon replaces one of its attacks;
+    // Sacred Weapon is used as you take the action and costs no attack.
+    if (c.turn.attacksLeft <= 0) { c.turn.actions--; c.turn.attacksLeft = c.attacksPerAction; }
+    if (spell.id !== 'sacredWeapon') c.turn.attacksLeft--;
+  } else combat.useBonus(c, spell.name);
+  // Lay on Hands spends from its pool by the amount healed (in resolve)
+  if (spell.uses && spell.id !== 'layOnHands') useResource(combat, c, spell.uses, 1);
+  else if (spell.level > 0 && paid === 0) useResource(combat, c, spell.free!, 1);
+  else if (paid > 0) spendSlot(combat, c, paid);
+  if (spell.consumes) c.inv[spell.consumes] = Math.max(0, (c.inv[spell.consumes] ?? 0) - 1);
   if (spell.concentration) startConcentration(combat, c, spell);
 
   combat.emit({ type: 'cast', actor: c.id, spell: spell.id, slot, targets: ids, point: cmd.point, area });
@@ -289,9 +345,58 @@ export function castSpell(combat: Combat, c: Creature, cmd: Extract<Command, { t
   resolve(combat, c, spell, slot, targets, cmd.point, area);
 }
 
+function useResource(combat: Combat, c: Creature, key: string, n: number) {
+  c.resourcesLeft[key] = (c.resourcesLeft[key] ?? 0) - n;
+  combat.emit({ type: 'resource', id: c.id, resource: key, left: c.resourcesLeft[key] });
+}
+
 function resolve(combat: Combat, c: Creature, spell: SpellDef, slot: number, targets: Creature[], point: Pos | undefined, area: Pos[] | undefined) {
-  const dc = c.spellcasting!.dc;
+  const dc = spellStats(c, spell).dc;
+  const hit = (t: Creature) => combat.emit({ type: 'spellHit', actor: c.id, target: t.id, spell: spell.id });
   switch (spell.id) {
+    case 'layOnHands': {
+      // Ruling: the paladin restores what the creature is missing, or what's left in the pool
+      const t = targets[0];
+      const n = Math.min(c.resourcesLeft.layOnHands ?? 0, t.maxHp - t.hp);
+      useResource(combat, c, 'layOnHands', n);
+      hit(t);
+      combat.heal(t, n);
+      return;
+    }
+    case 'divineFavor':
+      // 2024: 1 minute, no concentration. The fight ends well inside a minute.
+      combat.addCondition(c, { id: 'favored', source: c.id });
+      combat.log(`${c.name}'s weapon glows with divine favour (+1d4 Radiant).`, c.side === 'party' ? 'good' : 'bad');
+      return;
+    case 'heroism':
+      for (const t of targets) {
+        hit(t);
+        combat.addCondition(t, { id: 'heroism', conc: c.id, source: c.id, value: Math.max(0, castingMod(c, spell)) });
+        // Temporary HP arrive at the start of each of its turns
+      }
+      return;
+    case 'protectionFromEvilAndGood':
+      for (const t of targets) { hit(t); combat.addCondition(t, { id: 'warded', conc: c.id, source: c.id }); }
+      return;
+    case 'sacredWeapon': {
+      const bonus = Math.max(1, abilityMod(c.abilities.cha));
+      combat.addCondition(c, { id: 'sacredWeapon', source: c.id, value: bonus });
+      combat.log(`${c.name}'s weapon blazes with holy light (+${bonus} to hit).`, c.side === 'party' ? 'good' : 'bad');
+      return;
+    }
+    case 'adrenalineRush':
+      c.turn.movement += combat.speedOf(c); c.turn.dashed++;
+      combat.emit({ type: 'action', id: c.id, action: 'dash' });
+      combat.grantTempHp(c, c.pb);
+      return;
+    case 'spareTheDying': {
+      const t = targets[0];
+      hit(t);
+      combat.addCondition(t, { id: 'stable' });
+      t.deathSaves = { success: 0, fail: 0 };
+      combat.log(`${t.name} is stable.`, 'good');
+      return;
+    }
     case 'magicMissile': {
       // every dart hits; Shield stops them all
       for (const t of targets) {
@@ -331,6 +436,7 @@ function resolve(combat: Combat, c: Creature, spell: SpellDef, slot: number, tar
       }
       return;
     }
+    case 'cloudsJaunt':
     case 'mistyStep': {
       const from = { ...c.pos };
       c.pos = { ...point! };
@@ -370,7 +476,7 @@ function resolve(combat: Combat, c: Creature, spell: SpellDef, slot: number, tar
   if (spell.heal && (!spell.damage || (targets[0] && targets[0].side === c.side))) {
     for (const t of targets) {
       combat.emit({ type: 'spellHit', actor: c.id, target: t.id, spell: spell.id });
-      combat.heal(t, Math.max(0, rollDice(combat.rng, spellHealing(c, spell, slot)).total));
+      combat.heal(t, Math.max(0, rollHealing(combat, c, spellHealing(c, spell, slot), !spell.uses)));
     }
     return;
   }
@@ -398,6 +504,17 @@ function resolve(combat: Combat, c: Creature, spell: SpellDef, slot: number, tar
   }
 }
 
+/** Healing dice; the Healer feat rerolls 1s (and must use the new roll). */
+function rollHealing(combat: Combat, c: Creature, d: DiceExpr, isSpell: boolean): number {
+  let total = d.bonus;
+  for (const t of d.terms) for (let i = 0; i < t.count; i++) {
+    let r = combat.rng.die(t.sides);
+    if (r === 1 && isSpell && c.features.includes('healer')) r = combat.rng.die(t.sides);
+    total += r;
+  }
+  return total;
+}
+
 /** On-hit riders of spell attacks. */
 export function spellAttackRider(combat: Combat, caster: Creature, spellId: string, target: Creature) {
   const next = (when: 'start' | 'end') => ({ creature: caster.id, when, turn: caster.turnsStarted + 1 });
@@ -412,6 +529,10 @@ export function spellAttackRider(combat: Combat, caster: Creature, spellId: stri
         if (combat.active?.id === target.id) target.turn.movement = Math.max(0, target.turn.movement - 10);
       }
       break;
+    case 'chillTouch':
+      combat.addCondition(target, { id: 'noHealing', source: caster.id, expires: next('end') });
+      combat.log(`${target.name} can't regain Hit Points until the end of ${caster.name}'s next turn.`);
+      break;
     case 'shockingGrasp':
       // "can't take Reactions until the start of its next turn" — exactly what its turn reset restores
       target.turn.reaction = false;
@@ -419,6 +540,37 @@ export function spellAttackRider(combat: Combat, caster: Creature, spellId: stri
       break;
     default: break;
   }
+}
+
+// ---------------------------------------------------------------- Divine Smite
+
+/**
+ * Divine Smite can follow a hit with a melee weapon or an Unarmed Strike. It's a Bonus Action spell, so
+ * only on your own turn, and its slot counts towards the one-slot-per-turn rule (the free casting doesn't).
+ * The slot levels it could use now: 0 is Paladin's Smite's free casting.
+ */
+export function smiteOptions(combat: Combat, c: Creature, atk: AttackProfile): number[] {
+  const sp = c.spellcasting?.spells.find((s) => s.id === 'divineSmite');
+  if (!sp || atk.kind !== 'melee' || !(atk.weapon || atk.unarmed) || atk.spell) return [];
+  if (combat.active?.id !== c.id || c.turn.bonusActions <= 0 || combat.incapacitated(c)) return [];
+  return slotOptions(c, sp).filter((l) => l === 0 || !combat.usedThisTurn(c, 'spellSlot'));
+}
+
+/** Pay for a smite (right after the hit). */
+export function castSmite(combat: Combat, c: Creature, target: Creature, paid: number) {
+  const sp = spellOf(c, 'divineSmite');
+  combat.useBonus(c, sp.name);
+  if (paid === 0) useResource(combat, c, sp.free!, 1);
+  else spendSlot(combat, c, paid);
+  const slot = castLevel(sp, paid);
+  combat.emit({ type: 'cast', actor: c.id, spell: sp.id, slot, targets: [target.id] });
+  combat.log(`${c.name} smites ${target.name}!${slot > 1 ? ` (level ${slot})` : ''}`, c.side === 'party' ? 'good' : 'bad');
+}
+
+/** Divine Smite's damage: 2d8 Radiant, +1d8 per slot level above 1st, +1d8 against a Fiend or Undead. */
+export function smiteDice(slot: number, target: Creature): DiceExpr {
+  const n = 2 + Math.max(0, slot - 1) + (target.type === 'fiend' || target.type === 'undead' ? 1 : 0);
+  return { terms: [{ count: n, sides: 8 }], bonus: 0 };
 }
 
 // ---------------------------------------------------------------- Shield

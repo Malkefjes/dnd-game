@@ -254,6 +254,20 @@ export class TacticalAI {
         if (ts.length < 2) return undefined;
         return { cmd: cmd({ targets: ts.map((t) => t.id) }), value: ts.length * 3.2 };
       }
+      case 'layOnHands': {
+        // the whole pool, or what the most hurt ally within reach is missing
+        const pool = me.resourcesLeft.layOnHands ?? 0;
+        let best: { cmd: CastCmd; value: number } | undefined;
+        for (const a of allies) {
+          if (targetError(c, me, spell, a, from)) continue;
+          const v = this.healValue(a, Math.min(pool, a.maxHp - a.hp));
+          if (v > 0 && (!best || v > best.value)) best = { cmd: cmd({ targets: [a.id] }), value: v };
+        }
+        return best;
+      }
+      case 'divineFavor':
+        // worth it once a foe is close enough to hit this turn or next
+        return this.targets(me).some((e) => distanceFt(from, e.pos) <= 10) ? { cmd: cmd({}), value: 3 } : undefined;
       case 'preserveLife': {
         const pool = 5 * (me.level ?? 1);
         let v = 0;

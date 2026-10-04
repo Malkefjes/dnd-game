@@ -30,8 +30,12 @@ non-SRD 2024 content (all subclasses, etc.) is fine. Inspiration: Baldur's Gate 
 animations, death saves, victory and defeat screens.
 
 **Milestone 3 (The Hollow Abbey) is under way**, plan in [`docs/milestone-3.md`](docs/milestone-3.md). Phase 1
-(character creator + Paladin) has started: the character builder is in, and the four heroes are now built from
-creator choices (levels 1–4). Phase 0 is done: the game now starts on a title screen (New Game / Continue) and the premade party, at level 1, explores two
+(character creator + Paladin) has started: the character builder is in, the four heroes are now built from
+creator choices (levels 1–4), and the engine plays the new options: the Paladin (Lay on Hands, Divine Smite as a
+prompt after each melee hit, Divine Favor, Heroism, Protection from Evil and Good, Sacred Weapon), temporary HP,
+Cleave, Great Weapon Fighting, free castings (Magic Initiate, Paladin's Smite; slot 0 in a cast command), spells cast
+with their own ability (`castWith`), breath weapons, the goliath gifts, Relentless Endurance, Adrenaline Rush,
+Gnomish Cunning, Healer, Tavern Brawler, Chill Touch, Spare the Dying. Next: the creator screens. Phase 0 is done: the game now starts on a title screen (New Game / Continue) and the premade party, at level 1, explores two
 test floors (abbey and crypt) and fights skeletons and zombies. The goblin den is dev-only (`?den=1`).
 
 **Milestone 2 is done:** a party of four at level 3 with spellcasting. Torvald (Dwarf Fighter 3, Champion),
@@ -67,13 +71,15 @@ AI-vs-AI sims give the party ~85% wins over ~9 rounds (300 seeds). A human contr
 
 ### Known gaps / rough edges
 
-- **Rules not implemented:** Cleave mastery, grappling, Tactical Mind, Naturally Stealthy (halfling), Remarkable
+- **Rules not implemented:** grappling, Tavern Brawler's push, Lucky, the Crafter and Musician feats, Tactical Mind, Naturally Stealthy (halfling), Remarkable
   Athlete's free move after a crit, Human Heroic Inspiration, Turn Undead (no undead yet), Lesser Restoration (nothing to
   cure yet, so it isn't on the bar). Spell durations in rounds aren't tracked (fights end well inside 1 minute).
 - **Rulings (documented in code):** spheres are centred on a square and use grid distance (Sleep covers 3×3); cones
   start at the caster's square with a half-angle of atan(½); Sleep, Bless and Preserve Life pick only allies or only
   enemies automatically; Spiritual Weapon picks its own square next to the target; Preserve Life heals the most hurt
-  first; Champion's 19 counts as a hit. Elowen's Mage Armor is always up (cast each morning with Magic Initiate).
+  first; Champion's 19 counts as a hit. Cleave picks the most hurt enemy in reach; goliath on-hit gifts fire
+  automatically while uses last; Sacred Weapon turns Radiant only when that does more; Lay on Hands restores what's
+  missing (or what's left in the pool); Great Weapon Fighting applies to the weapon's dice, not a smite's. Elowen's Mage Armor is always up (cast each morning with Magic Initiate).
 - **AI choices:** drowsy creatures (Sleep stage 1) stay put; the AI never casts Aid or Shield of Faith, and only
   Blesses in the first three rounds.
 - **Visual stand-ins:** KayKit has no bow, so shortbow users show a crossbow (rules still say Shortbow); hobgoblins
@@ -216,6 +222,10 @@ CLICKS=3 node tools/spellshot.mjs "http://127.0.0.1:5173/?seed=5&play=1&speed=3"
   leave the middle of the view. The owner dislikes a camera that keeps moving.
 - **Ground overlays** must sit ≥ 0.05 above `floorY` or the KayKit floor tiles hide them (the movement range was
   invisible in Milestone 1 because of this).
+- **Hotbar labels:** buttons show their names under the icons by default; L (or the "Aa" button) toggles it and the
+  choice is kept in `localStorage`. Long names are shortened in `shortName()` in `hud.ts`.
+- **Reaction prompts** answer with `Answer = boolean | number`: Divine Smite's is the slot level (0 = free casting)
+  or false. Anything new that asks the player goes through `combat.ask()`, so the snapshot replay keeps working.
 - **HUD:** panels scale with the window via CSS `zoom: var(--ui)`; never apply it to things positioned from 3D
   projections (nameplates, floating text, tooltips). Nameplates carry `party` / `enemy` classes, so don't use those
   as panel class names.

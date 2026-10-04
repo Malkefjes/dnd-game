@@ -3,7 +3,7 @@
 import { Rng, rollD20, rollDice, resolveAdvantage, hitChanceWithDie, averageDice, parseDice, formatDice, type Advantage, type DiceExpr } from './dice';
 import { Grid, distanceFt, samePos, posKey, computeCover, COVER_AC, coverAtLeast, type Pos, type Cover } from './grid';
 import { abilityMod, SIZE_RANK, SKILL_ABILITY, type Ability, type AttackProfile, type Condition, type ConditionId, type Creature, type CreatureDef, type DamageType, type Skill, type Summon, type TurnState } from './types';
-import { castSpell, attackWithSummon, endConcentration, canCastShield, castShield, spellAttackRider, sleepEndOfTurn } from './spells';
+import { castSpell, attackWithSummon, endConcentration, canCastShield, castShield, spellAttackRider, sleepEndOfTurn, smiteOptions, castSmite, smiteDice, castLevel, spellOf, OTHERWORLDLY } from './spells';
 
 // ---------------------------------------------------------------- events
 
@@ -36,6 +36,7 @@ export type GameEvent =
   | { type: 'unsummon'; id: string }
   | { type: 'teleport'; id: string; from: Pos; to: Pos }
   | { type: 'maxHp'; target: string; maxHp: number }
+  | { type: 'tempHp'; target: string; tempHp: number }
   | { type: 'combatEnd'; winner: 'party' | 'enemy' };
 
 // ---------------------------------------------------------------- commands
@@ -68,7 +69,16 @@ export type Command =
 /** A decision a creature's controller must make mid-command. */
 export type ReactionPrompt =
   | { kind: 'opportunity'; reactor: string; target: string }
-  | { kind: 'shield'; reactor: string; attacker: string; total: number; ac: number; wouldMiss: boolean };
+  | { kind: 'shield'; reactor: string; attacker: string; total: number; ac: number; wouldMiss: boolean }
+  /** Divine Smite after a hit: answer with a slot level from `options` (0 = the free casting), or false. */
+  | { kind: 'smite'; reactor: string; target: string; options: number[]; crit: boolean }
+  /** Goliath (stone giant): reduce damage you take by 1d12 + CON. */
+  | { kind: 'stonesEndurance'; reactor: string; amount: number }
+  /** Goliath (storm giant): 1d8 Thunder back at a creature that damaged you. */
+  | { kind: 'stormsThunder'; reactor: string; attacker: string };
+
+/** A yes / no, or (Divine Smite) the slot level chosen. */
+export type Answer = boolean | number;
 
 /**
  * Thrown when `decide` returns undefined: a player has to choose. The command is
@@ -90,6 +100,7 @@ export interface CarriedState {
   resourcesLeft: Record<string, number>;
   inv: Record<string, number>;
   conditions: Condition[];
+  tempHp?: number;
 }
 
 export interface AttackPreview {
@@ -124,7 +135,7 @@ export class Combat {
    * casts Shield only when it turns a hit into a miss. The game UI replaces it and
    * returns undefined for a player's creature, which raises NeedsDecision.
    */
-  decide: (p: ReactionPrompt) => boolean | undefined = (p) => this.defaultReaction(p);
+  decide: (p: ReactionPrompt) => Answer | undefined = (p) => this.defaultReaction(p);
   private events: GameEvent[] = [];
   /** Increments every time any creature's turn starts; "once per turn" features key off it. */
   turnSerial = 0;
@@ -142,7 +153,7 @@ export class Combat {
   add(def: CreatureDef, pos: Pos, carry?: CarriedState): Creature {
     if (this.creatures.some((c) => c.id === def.id)) throw new Error(`duplicate id ${def.id}`);
     const c: Creature = {
-      ...def, hp: def.maxHp, pos: { ...pos }, initiative: 0, conditions: [], turnsStarted: 0,
+      ...def, hp: def.maxHp, tempHp: 0, pos: { ...pos }, initiative: 0, conditions: [], turnsStarted: 0,
       turn: freshTurn(def.speed), resourcesLeft: { ...(def.resources ?? {}) }, inv: { ...(def.inventory ?? {}) }, deathSaves: { success: 0, fail: 0 },
       slotsLeft: [...(def.spellcasting?.slots ?? [])], concentration: null,
     };
@@ -150,6 +161,7 @@ export class Combat {
       c.maxHp = carry.maxHp; c.hp = carry.hp;
       c.slotsLeft = [...carry.slotsLeft]; c.resourcesLeft = { ...carry.resourcesLeft }; c.inv = { ...carry.inv };
       c.conditions = carry.conditions.map((k) => ({ ...k }));
+      c.tempHp = carry.tempHp ?? 0;
     }
     this.creatures.push(c);
     return c;
@@ -301,7 +313,14 @@ export class Combat {
 
   /** Work out advantage, cover, hit chance and expected damage for an attack — used by the rules, the UI and the AI. */
   previewAttack(attacker: Creature, attackId: string | AttackProfile, target: Creature, opts: { offhand?: boolean; opportunity?: boolean; from?: Pos } = {}): AttackPreview {
-    const atk = typeof attackId === 'string' ? this.attackOf(attacker, attackId) : attackId;
+    let atk = typeof attackId === 'string' ? this.attackOf(attacker, attackId) : attackId;
+    // Sacred Weapon: + CHA to melee weapon attack rolls, and the weapon can deal Radiant damage instead.
+    // Ruling: it switches to Radiant only when that does more against this target.
+    const sacred = this.cond(attacker, 'sacredWeapon');
+    if (sacred && atk.weapon && atk.kind === 'melee') {
+      const worse = (t: string) => (target.immune?.includes(t as DamageType) ? 0 : target.resist?.includes(t as DamageType) ? 1 : target.vulnerable?.includes(t as DamageType) ? 4 : 2);
+      atk = { ...atk, toHit: atk.toHit + (sacred.value ?? 1), damageType: worse('radiant') > worse(atk.damageType) ? 'radiant' : atk.damageType };
+    }
     const from = opts.from ?? attacker.pos;
     const dist = distanceFt(from, target.pos);
     const adv: string[] = [], dis: string[] = [];
@@ -327,6 +346,7 @@ export class Combat {
     if (this.has(attacker, 'packTactics') && this.alliesOf(attacker).some((a) => !this.incapacitated(a) && distanceFt(a.pos, target.pos) <= 5)) adv.push('Pack Tactics');
     if (this.cond(attacker, 'steadyAim')) adv.push('Steady Aim');
     if (this.has(attacker, 'assassinate') && this.round === 1 && target.turnsStarted === 0) adv.push('Assassinate');
+    if (this.cond(target, 'warded') && OTHERWORLDLY.includes(attacker.type ?? '')) dis.push('Protection from Evil and Good');
     const mode = resolveAdvantage(adv.length, dis.length);
 
     const saved = attacker.pos;
@@ -347,6 +367,7 @@ export class Combat {
     if (sneak) extraDice += (attacker.sneakAttackDice ?? 1) * 3.5;
     if (atk.bonusOnAdvantage && mode === 'advantage') extraDice += averageDice(atk.bonusOnAdvantage);
     if (atk.extraDamage) extraDice += averageDice(atk.extraDamage.dice);
+    if (this.cond(attacker, 'favored') && atk.weapon) extraDice += 2.5;
     perHit += extraDice;
     const expected = Math.max(0, chance * perHit + critChance * (diceAvg + extraDice));
     // Potent Cantrip: a missed cantrip still deals half damage
@@ -358,6 +379,7 @@ export class Combat {
     if (sneak) reasons.push('Sneak Attack');
     let damageText = formatDice(dmgExpr);
     if (sneak) damageText += ` +${attacker.sneakAttackDice ?? 1}d6`;
+    if (this.cond(attacker, 'favored') && atk.weapon) damageText += ' +1d4';
     return { attack: atk, mode, reasons, cover, ac, chance, expected: expectedAll, damageText, inRange, longRange, usesBonusAction: !!opts.offhand };
   }
 
@@ -441,6 +463,9 @@ export class Combat {
     if (this.cond(c, 'incapacitated')) { c.turn.actions = 0; c.turn.bonusActions = 0; }
     this.emit({ type: 'turnStart', id: c.id, round: this.round });
     this.log(`${c.name}'s turn`, 'turn');
+    // Heroism: Temporary HP equal to the caster's spellcasting modifier at the start of each turn
+    const hero = this.cond(c, 'heroism');
+    if (hero && this.isConscious(c)) this.grantTempHp(c, hero.value ?? 0);
     if (c.hp === 0 && c.pc && this.isAlive(c) && !this.cond(c, 'stable')) this.deathSave(c);
   }
 
@@ -644,13 +669,20 @@ export class Combat {
       }
       return;
     }
+    // Divine Smite is decided right after the hit, before the damage is rolled
+    let smite = 0;
+    const smiteOpts = smiteOptions(this, attacker, atk);
+    if (smiteOpts.length) {
+      const ans = this.ask({ kind: 'smite', reactor: attacker.id, target: target.id, options: smiteOpts, crit });
+      if (typeof ans === 'number' && smiteOpts.includes(ans)) { castSmite(this, attacker, target, ans); smite = castLevel(spellOf(attacker, 'divineSmite'), ans); }
+    }
     // damage
     const base = opts.offhand ? (atk.offhandDamage ?? atk.damage) : atk.damage;
-    let dice = rollDice(this.rng, { terms: base.terms, bonus: 0 }, crit);
+    let dice = this.rollAttackDice(attacker, atk, base, crit);
     const parts: string[] = [];
     if (this.has(attacker, 'savageAttacker') && atk.weapon && !this.usedThisTurn(attacker, 'savageAttacker')) {
       this.markUsed(attacker, 'savageAttacker');
-      const again = rollDice(this.rng, { terms: base.terms, bonus: 0 }, crit);
+      const again = this.rollAttackDice(attacker, atk, base, crit);
       if (again.total > dice.total) { dice = again; }
       parts.push('Savage Attacker');
     }
@@ -669,8 +701,58 @@ export class Combat {
       const r = rollDice(this.rng, atk.extraDamage.dice, crit);
       this.applyDamage(target, r.total, atk.extraDamage.type, [], attacker, crit);
     }
-    if (this.isAlive(target)) this.applyMastery(attacker, atk, target);
+    // Divine Favor: +1d4 Radiant on weapon hits
+    if (this.cond(attacker, 'favored') && atk.weapon && this.isAlive(target)) {
+      this.applyDamage(target, rollDice(this.rng, parseDice('1d4'), crit).total, 'radiant', ['Divine Favor'], attacker, crit);
+    }
+    if (this.isAlive(target)) this.giantGift(attacker, target, crit);
+    if (smite && this.isAlive(target)) this.applyDamage(target, rollDice(this.rng, smiteDice(smite, target), crit).total, 'radiant', ['Divine Smite'], attacker, crit);
+    if (this.isAlive(target) || atk.mastery === 'cleave') this.applyMastery(attacker, atk, target);
     if (atk.spell && this.isAlive(target)) spellAttackRider(this, attacker, atk.spell, target);
+  }
+
+  /**
+   * Roll an attack's damage dice (doubled on a crit). Great Weapon Fighting treats 1s and 2s as 3s;
+   * Tavern Brawler rerolls an Unarmed Strike's 1s once.
+   */
+  private rollAttackDice(attacker: Creature, atk: AttackProfile, d: DiceExpr, crit: boolean): { total: number } {
+    const brawler = atk.unarmed && this.has(attacker, 'tavernBrawler');
+    let total = 0;
+    for (const t of d.terms) for (let i = 0; i < t.count * (crit ? 2 : 1); i++) {
+      let r = this.rng.die(t.sides);
+      if (brawler && r === 1) r = this.rng.die(t.sides);
+      if (atk.gwf && r < 3) r = 3;
+      total += r;
+    }
+    return { total };
+  }
+
+  /**
+   * Goliath Giant Ancestry, the on-hit gifts (Proficiency Bonus uses per Long Rest). Ruling: they're used
+   * automatically on your hits while uses last, since nothing is lost by using them.
+   */
+  private giantGift(attacker: Creature, target: Creature, crit: boolean) {
+    if ((attacker.resourcesLeft.giantAncestry ?? 0) <= 0) return;
+    const use = (what: string) => {
+      attacker.resourcesLeft.giantAncestry--;
+      this.emit({ type: 'resource', id: attacker.id, resource: 'giantAncestry', left: attacker.resourcesLeft.giantAncestry });
+      this.log(`${what}!`);
+    };
+    if (this.has(attacker, 'firesBurn')) {
+      use('Fire\'s Burn');
+      this.applyDamage(target, rollDice(this.rng, parseDice('1d10'), crit).total, 'fire', ['Fire\'s Burn'], attacker, crit);
+    } else if (this.has(attacker, 'frostsChill')) {
+      use('Frost\'s Chill');
+      this.applyDamage(target, rollDice(this.rng, parseDice('1d6'), crit).total, 'cold', ['Frost\'s Chill'], attacker, crit);
+      if (this.isAlive(target) && !this.cond(target, 'chilled')) {
+        this.addCondition(target, { id: 'chilled', source: attacker.id, expires: { creature: attacker.id, when: 'start', turn: attacker.turnsStarted + 1 } });
+        if (this.active?.id === target.id) target.turn.movement = Math.max(0, target.turn.movement - 10);
+      }
+    } else if (this.has(attacker, 'hillsTumble') && SIZE_RANK[target.size] <= SIZE_RANK.large && !this.cond(target, 'prone')) {
+      use('Hill\'s Tumble');
+      this.addCondition(target, { id: 'prone' });
+      this.log(`${target.name} is knocked Prone.`);
+    }
   }
 
   private applyMastery(attacker: Creature, atk: AttackProfile, target: Creature) {
@@ -693,6 +775,20 @@ export class Combat {
         }
         break;
       case 'push': this.push(attacker, target, 10); break;
+      case 'cleave': {
+        // a second melee attack roll against a creature within 5 ft of the first and within your reach, once per
+        // turn; no ability modifier to its damage unless negative. Ruling: it goes to the most hurt such enemy.
+        if (atk.kind !== 'melee' || this.usedThisTurn(attacker, 'cleave')) break;
+        const second = this.enemiesOf(attacker)
+          .filter((o) => o.id !== target.id && distanceFt(o.pos, target.pos) <= 5 && distanceFt(o.pos, attacker.pos) <= atk.reach && this.coverBetween(attacker, o) !== 'total' && !this.cond(o, 'hidden'))
+          .sort((a, b) => a.hp - b.hp)[0];
+        if (!second) break;
+        this.markUsed(attacker, 'cleave');
+        this.log(`Cleave: ${attacker.name} swings on into ${second.name}.`);
+        const mod = Math.max(0, atk.abilityMod);
+        this.resolveAttack(attacker, { ...atk, damage: { terms: atk.damage.terms, bonus: atk.damage.bonus - mod } }, second);
+        break;
+      }
       case 'topple': {
         const dc = 8 + atk.abilityMod + attacker.pb;
         if (!this.savingThrow(target, 'con', dc)) { this.addCondition(target, { id: 'prone' }); this.log(`Topple: ${target.name} is knocked Prone.`); }
@@ -723,6 +819,8 @@ export class Combat {
       return false;
     }
     if (ability === 'dex' && this.cond(c, 'dodging')) mode = mode === 'disadvantage' ? 'normal' : 'advantage';
+    // Gnomish Cunning: Advantage on Intelligence, Wisdom and Charisma saves
+    if ((ability === 'int' || ability === 'wis' || ability === 'cha') && this.has(c, 'gnomishCunning')) mode = mode === 'disadvantage' ? 'normal' : 'advantage';
     const r = rollD20(this.rng, mode, this.has(c, 'luck'));
     const bless = this.cond(c, 'blessed') ? this.rng.die(4) : 0;
     const total = r.natural + this.saveMod(c, ability) + bless;
@@ -752,6 +850,32 @@ export class Combat {
     }
     if (target.resist?.includes(dt)) { amount = Math.floor(amount / 2); parts = [...parts, 'resisted']; }
     if (target.vulnerable?.includes(dt)) { amount *= 2; parts = [...parts, 'vulnerable']; }
+    // Stone's Endurance (goliath): a Reaction to reduce the damage by 1d12 + CON
+    if (amount > 0 && target.hp > 0 && this.has(target, 'stonesEndurance') && (target.resourcesLeft.giantAncestry ?? 0) > 0 && this.canReact(target)
+      && this.ask({ kind: 'stonesEndurance', reactor: target.id, amount })) {
+      target.turn.reaction = false;
+      target.resourcesLeft.giantAncestry--;
+      this.emit({ type: 'resource', id: target.id, resource: 'giantAncestry', left: target.resourcesLeft.giantAncestry });
+      const cut = Math.max(0, rollDice(this.rng, parseDice('1d12')).total + this.modOf(target, 'con'));
+      this.log(`${target.name} braces like stone (Stone's Endurance −${cut}).`, target.side === 'party' ? 'good' : 'bad');
+      amount = Math.max(0, amount - cut);
+      parts = [...parts, 'Stone\'s Endurance'];
+    }
+    // Temporary Hit Points are lost first
+    if (amount > 0 && target.tempHp > 0) {
+      const absorbed = Math.min(target.tempHp, amount);
+      target.tempHp -= absorbed;
+      this.emit({ type: 'tempHp', target: target.id, tempHp: target.tempHp });
+      parts = [...parts, `${absorbed} temp HP`];
+      if (absorbed === amount) {
+        this.emit({ type: 'damage', target: target.id, amount, damageType, hp: target.hp, parts });
+        this.log(`${target.name}'s temporary HP soak up ${amount} ${damageType} damage.`);
+        this.concentrationCheck(target, amount);
+        this.stormsThunder(target, source);
+        return;
+      }
+      amount -= absorbed;
+    }
     // Undead Fortitude (zombies): a CON save (DC 5 + the damage) to drop to 1 HP instead, unless Radiant or a crit
     if (this.has(target, 'undeadFortitude') && target.hp > 0 && amount >= target.hp && dt !== 'radiant' && !crit) {
       if (this.savingThrow(target, 'con', 5 + amount)) {
@@ -773,6 +897,14 @@ export class Combat {
     }
     const before = target.hp;
     target.hp = Math.max(0, target.hp - amount);
+    // Relentless Endurance (orc): once per Long Rest, drop to 1 HP instead of 0 unless killed outright
+    if (target.hp === 0 && this.has(target, 'relentlessEndurance') && (target.resourcesLeft.relentlessEndurance ?? 0) > 0 && !(target.pc && amount - before >= target.maxHp)) {
+      target.resourcesLeft.relentlessEndurance--;
+      this.emit({ type: 'resource', id: target.id, resource: 'relentlessEndurance', left: 0 });
+      target.hp = 1;
+      parts = [...parts, 'Relentless Endurance'];
+      this.log(`${target.name} refuses to fall! (Relentless Endurance)`, target.side === 'party' ? 'good' : 'bad');
+    }
     this.emit({ type: 'damage', target: target.id, amount, damageType, hp: target.hp, parts });
     this.log(`${target.name} takes ${amount} ${damageType} damage${parts.length ? ` (${parts.join(', ')})` : ''}. ${target.hp}/${target.maxHp} HP.`, target.side === 'party' ? 'bad' : 'good');
     // damage ends magical sleep
@@ -780,11 +912,8 @@ export class Combat {
       for (const k of target.conditions.filter((x) => x.spell === 'sleep')) this.removeCondition(target, k.id);
       this.log(`${target.name} wakes up!`, target.side === 'party' ? 'good' : 'bad');
     }
-    // concentration: Constitution save, DC 10 or half the damage (max 30)
-    if (target.hp > 0 && target.concentration) {
-      const dc = Math.min(30, Math.max(10, Math.floor(amount / 2)));
-      if (!this.savingThrow(target, 'con', dc)) endConcentration(this, target, 'loses concentration');
-    }
+    if (target.hp > 0) this.concentrationCheck(target, amount);
+    if (target.hp > 0) this.stormsThunder(target, source);
     if (target.hp === 0) {
       const overflow = amount - before;
       if (!target.pc) { this.kill(target, source); return; }
@@ -799,6 +928,33 @@ export class Combat {
     }
   }
 
+  /** Concentration: a Constitution save, DC 10 or half the damage (max 30). */
+  private concentrationCheck(target: Creature, amount: number) {
+    if (!target.concentration) return;
+    const dc = Math.min(30, Math.max(10, Math.floor(amount / 2)));
+    if (!this.savingThrow(target, 'con', dc)) endConcentration(this, target, 'loses concentration');
+  }
+
+  /** Storm's Thunder (goliath): a Reaction when a creature within 60 ft damages you: 1d8 Thunder to it. */
+  private stormsThunder(target: Creature, source?: Creature) {
+    if (!source || source.id === target.id || !this.isAlive(source) || !this.has(target, 'stormsThunder')) return;
+    if ((target.resourcesLeft.giantAncestry ?? 0) <= 0 || !this.canReact(target) || distanceFt(target.pos, source.pos) > 60) return;
+    if (!this.ask({ kind: 'stormsThunder', reactor: target.id, attacker: source.id })) return;
+    target.turn.reaction = false;
+    target.resourcesLeft.giantAncestry--;
+    this.emit({ type: 'resource', id: target.id, resource: 'giantAncestry', left: target.resourcesLeft.giantAncestry });
+    this.log(`Thunder cracks back at ${source.name}! (Storm's Thunder)`, target.side === 'party' ? 'good' : 'bad');
+    this.applyDamage(source, rollDice(this.rng, parseDice('1d8')).total, 'thunder', ['Storm\'s Thunder'], target);
+  }
+
+  /** Temporary Hit Points don't stack: keep the higher amount. */
+  grantTempHp(c: Creature, n: number) {
+    if (n <= c.tempHp) { this.log(`${c.name} keeps ${c.tempHp} temporary HP.`); return; }
+    c.tempHp = n;
+    this.emit({ type: 'tempHp', target: c.id, tempHp: n });
+    this.log(`${c.name} gains ${n} temporary HP.`, c.side === 'party' ? 'good' : 'bad');
+  }
+
   private kill(c: Creature, by?: Creature) {
     if (c.concentration) endConcentration(this, c);
     c.hp = 0;
@@ -809,6 +965,7 @@ export class Combat {
 
   heal(c: Creature, amount: number) {
     if (!this.isAlive(c)) return;
+    if (this.cond(c, 'noHealing')) { this.log(`${c.name} can't regain Hit Points (Chill Touch).`, c.side === 'party' ? 'bad' : 'good'); return; }
     const wasDown = c.hp === 0;
     c.hp = Math.min(c.maxHp, c.hp + amount);
     this.emit({ type: 'heal', target: c.id, amount, hp: c.hp });
@@ -977,14 +1134,20 @@ export class Combat {
   // ------------------------------------------------------------ reactions & replay
 
   /** Ask whoever controls the reactor. Undefined means "a player must choose": abandon the command. */
-  ask(p: ReactionPrompt): boolean {
+  ask(p: ReactionPrompt): Answer {
     const answer = this.decide(p);
     if (answer === undefined) throw new NeedsDecision(p, [...this.events]);
     return answer;
   }
 
-  defaultReaction(p: ReactionPrompt): boolean {
+  defaultReaction(p: ReactionPrompt): Answer {
     if (p.kind === 'shield') return p.wouldMiss;
+    if (p.kind === 'smite') {
+      // the free casting whenever it's there; a slot on a crit or against a fiend or undead
+      if (p.options.includes(0)) return 0;
+      const t = this.get(p.target);
+      return p.crit || t.type === 'fiend' || t.type === 'undead' ? p.options[0] : false;
+    }
     return true;
   }
 

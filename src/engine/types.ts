@@ -64,6 +64,8 @@ export interface AttackProfile {
   gwf?: boolean;
   /** Cantrip (Potent Cantrip applies). */
   cantrip?: boolean;
+  /** Unarmed Strike (Divine Smite works with it; Tavern Brawler rerolls its 1s). */
+  unarmed?: boolean;
 }
 
 export type FeatureId =
@@ -86,6 +88,8 @@ export type ConditionId =
   | 'prone' | 'unconscious' | 'invisible' | 'hidden' | 'dodging' | 'disengaged'
   | 'sapped' | 'vexing' | 'slowed' | 'stable' | 'dead'
   | 'incapacitated' | 'blessed' | 'shieldOfFaith' | 'shielded' | 'guided' | 'chilled' | 'steadyAim' | 'aided'
+  // Paladin and cantrip effects
+  | 'favored' | 'heroism' | 'warded' | 'sacredWeapon' | 'noHealing'
   // rules for these arrive with the Milestone 3 bestiary; immunities can already name them
   | 'poisoned' | 'exhaustion' | 'frightened' | 'grappled' | 'paralyzed' | 'restrained' | 'charmed';
 
@@ -236,6 +240,8 @@ export interface CreatureDef {
 
 export interface Creature extends CreatureDef {
   hp: number;
+  /** Temporary Hit Points: lost first, don't stack (the higher amount is kept). */
+  tempHp: number;
   pos: Pos;
   initiative: number;
   conditions: Condition[];

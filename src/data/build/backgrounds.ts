@@ -20,7 +20,7 @@ export const ORIGIN_FEATS: Record<OriginFeatId, OriginFeat> = {
   musician: { id: 'musician', name: 'Musician', implemented: false, text: 'Play a song on a rest to give allies Heroic Inspiration.' },
   savageAttacker: { id: 'savageAttacker', name: 'Savage Attacker', feature: 'savageAttacker', implemented: true, text: 'Once per turn, roll a weapon\'s damage dice twice and use either roll.' },
   skilled: { id: 'skilled', name: 'Skilled', feature: 'skilled', implemented: true, text: 'Proficiency in any three skills.' },
-  tavernBrawler: { id: 'tavernBrawler', name: 'Tavern Brawler', feature: 'tavernBrawler', implemented: true, text: 'Unarmed Strikes deal 1d4 + STR and reroll 1s; push the target 5 ft once per turn on a hit.' },
+  tavernBrawler: { id: 'tavernBrawler', name: 'Tavern Brawler', feature: 'tavernBrawler', implemented: true, text: 'Unarmed Strikes deal 1d4 + STR and reroll 1s. (Pushing the target 5 ft on a hit isn\'t in yet.)' },
   tough: { id: 'tough', name: 'Tough', feature: 'tough', implemented: true, text: 'Your Hit Point maximum increases by 2 per level.' },
 };
 

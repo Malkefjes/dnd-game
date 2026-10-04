@@ -13,6 +13,14 @@ export const SPELL_COLOR: Record<string, number> = {
   magicMissile: 0xc07aff, sacredFlame: 0xffe7a0, tollTheDead: 0x8a5cff, guidingBolt: 0xfff0b0, inflictWounds: 0x7a40b0,
   sleep: 0xb08aff, healingWord: 0x7cff8a, cureWounds: 0x7cff8a, bless: 0xffe08a, shieldOfFaith: 0xfff3c0, shield: 0x8fd0ff,
   spiritualWeapon: 0x9fe8ff, aid: 0xfff3c0, mistyStep: 0xd0e0ff, divineSpark: 0xfff0b0, preserveLife: 0x9fffb0,
+  chillTouch: 0x6a50a0, poisonSpray: 0x8cd040, produceFlame: 0xff8a2a, spareTheDying: 0xc0ffd0,
+  divineSmite: 0xfff2b0, divineFavor: 0xffe08a, heroism: 0xffc860, protectionFromEvilAndGood: 0xd8ecff, sacredWeapon: 0xfff6c8,
+  layOnHands: 0x9fffb0, healingHands: 0xfff0c0, cloudsJaunt: 0xe0f0ff, adrenalineRush: 0xff7050,
+};
+
+/** Breath weapons take the colour of their damage. */
+export const DAMAGE_COLOR: Record<string, number> = {
+  fire: 0xff6a10, cold: 0x9fe0ff, lightning: 0x9fb8ff, acid: 0x9fe040, poison: 0x7fc040, thunder: 0xc0c8ff, radiant: 0xfff0b0, necrotic: 0x7a40b0,
 };
 
 /**

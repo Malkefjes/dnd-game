@@ -3,18 +3,18 @@
 // (vm) mirrors it event-by-event so the HUD and figures change exactly when animations do.
 // The Game (game.ts) owns the stage, the input and exploration, and runs one of these per fight.
 import * as THREE from 'three';
-import { Combat, NeedsDecision, RuleError, type AttackPreview, type Command, type GameEvent, type ReactionPrompt } from '../engine/combat';
+import { Combat, NeedsDecision, RuleError, type Answer, type AttackPreview, type Command, type GameEvent, type ReactionPrompt } from '../engine/combat';
 import { TacticalAI } from '../engine/ai';
 import { formatDice } from '../engine/dice';
 import { distanceFt, samePos, type Pos } from '../engine/grid';
 import type { AttackProfile, Creature, SpellDef } from '../engine/types';
 import {
   areaSquares, areaVictims, castBlocker, failChance, pointError, slotOptions, spellAttackProfile, spellDamage, spellHealing, spellOf,
-  summonCanReach, summonsOf, targetCount, targetError, weaponSpot,
+  spellStats, summonCanReach, summonsOf, targetCount, targetError, weaponSpot,
 } from '../engine/spells';
 import { PixelRenderer } from '../render/pixel-renderer';
 import { Overlays } from '../render/overlays';
-import { Effects, SPELL_COLOR } from '../render/effects';
+import { DAMAGE_COLOR, Effects, SPELL_COLOR } from '../render/effects';
 import { Hud, esc, hpBar, type HotbarState, type Slot } from '../ui/hud';
 
 type Mode =
@@ -61,6 +61,7 @@ export const CONDITION_ICON: Record<string, string> = {
 const CONDITION_NAME: Record<string, string> = {
   hidden: 'Hidden', prone: 'Prone', dodging: 'Dodging', sapped: 'Sapped', slowed: 'Slowed', disengaged: 'Disengaged', stable: 'Stable', unconscious: 'Unconscious', vexing: 'Vexing',
   incapacitated: 'Drowsy', blessed: 'Blessed', shieldOfFaith: 'Shield of Faith', shielded: 'Shield', guided: 'Marked', chilled: 'Chilled', steadyAim: 'Steady Aim', aided: 'Aid',
+  favored: 'Divine Favor', heroism: 'Heroism', warded: 'Warded', sacredWeapon: 'Sacred Weapon', noHealing: 'Can\'t heal',
 };
 const ORDINAL = ['', '1st', '2nd', '3rd', '4th', '5th'];
 
@@ -190,7 +191,7 @@ export class CombatView {
    */
   private async run(cmd: Command): Promise<GameEvent[] | RuleError> {
     const c = this.combat;
-    const answers: boolean[] = [];
+    const answers: Answer[] = [];
     let shown = 0;
     try {
       for (;;) {
@@ -218,11 +219,33 @@ export class CombatView {
     }
   }
 
-  private async askReaction(p: ReactionPrompt): Promise<boolean> {
+  private async askReaction(p: ReactionPrompt): Promise<Answer> {
     const c = this.combat;
     const reactor = c.get(p.reactor);
     const v = this.vm.get(reactor.id)!;
     this.r.ensureVisible(v.pos.x, v.pos.y);
+    if (p.kind === 'smite') {
+      const t = c.get(p.target);
+      const holy = t.type === 'fiend' || t.type === 'undead';
+      const opts = p.options.map((l) => ({ label: l === 0 ? 'Smite (free)' : `Smite (${ORDINAL[l]} slot, ${reactor.slotsLeft[l]} left)`, l }));
+      const i = await this.hud.ask(`<h3>Divine Smite · ${esc(reactor.name)}</h3><p>${esc(reactor.name)} ${p.crit ? '<b>critically</b> hits' : 'hits'} ${esc(t.name)}. Smite for <b>2d8 Radiant</b>${holy ? ' <b>+1d8</b> (it\'s ' + esc(t.type!) + ')' : ''}, +1d8 per slot level above 1st${p.crit ? ', dice doubled' : ''}?</p>
+        <p class="tip-note">Uses your Bonus Action.</p>`,
+        [...opts.map((o, k) => ({ label: k === 0 ? `${o.label} (Y)` : o.label })), { label: 'No (N)', secondary: true }]);
+      return i < opts.length ? opts[i].l : false;
+    }
+    if (p.kind === 'stonesEndurance') {
+      const i = await this.hud.ask(`<h3>Reaction · ${esc(reactor.name)}</h3><p>${esc(reactor.name)} is about to take ${p.amount} damage. Use <b>Stone's Endurance</b> to reduce it by 1d12 + CON?</p>
+        <p class="tip-note">${reactor.resourcesLeft.giantAncestry ?? 0} Giant Ancestry uses left.</p>`,
+        [{ label: 'Brace (Y)' }, { label: 'Take it (N)', secondary: true }]);
+      return i === 0;
+    }
+    if (p.kind === 'stormsThunder') {
+      const atk = c.get(p.attacker);
+      const i = await this.hud.ask(`<h3>Reaction · ${esc(reactor.name)}</h3><p>${esc(atk.name)} hurt ${esc(reactor.name)}. Use <b>Storm's Thunder</b> to deal 1d8 Thunder damage back?</p>
+        <p class="tip-note">${reactor.resourcesLeft.giantAncestry ?? 0} Giant Ancestry uses left.</p>`,
+        [{ label: 'Thunder (Y)' }, { label: 'Hold (N)', secondary: true }]);
+      return i === 0;
+    }
     if (p.kind === 'opportunity') {
       const t = c.get(p.target);
       const atk = c.bestMeleeAttack(reactor, t);
@@ -392,7 +415,7 @@ export class CombatView {
       const targets = [...m.targets, target.id].map((id) => c.get(id));
       return { kind: 'cast', spell: sp, slot: m.slot, targets, approach: none, complete: targets.length >= targetCount(sp, m.slot), at };
     }
-    if (shape.kind === 'sphere' || shape.kind === 'cone' || shape.kind === 'point') {
+    if (shape.kind === 'sphere' || shape.kind === 'cone' || shape.kind === 'line' || shape.kind === 'point') {
       const err = pointError(c, a, sp, at);
       if (err) return { kind: 'invalid', reason: err, at };
       const area = shape.kind === 'point' ? [at] : areaSquares(c, a, sp, at);
@@ -405,9 +428,9 @@ export class CombatView {
   private castTooltip(p: Extract<Plan, { kind: 'cast' }>): string {
     const c = this.combat, a = c.active!;
     const sp = p.spell, slot = p.slot;
-    const book = a.spellcasting!;
+    const book = spellStats(a, sp);
     const lines: string[] = [];
-    const lvl = sp.uses ? 'Channel Divinity' : sp.level === 0 ? 'Cantrip' : `${ORDINAL[slot]}-level slot`;
+    const lvl = sp.uses ? 'Channel Divinity' : sp.level === 0 ? 'Cantrip' : slot === 0 ? 'Free casting' : `${ORDINAL[slot]}-level slot`;
     const pct = (x: number) => `${Math.round(x * 100)}%`;
     const who = (t: Creature) => `<span class="${t.side === a.side ? 'tip-warn' : ''}">${esc(t.name)}</span>`;
     if (p.area) {
@@ -611,19 +634,21 @@ export class CombatView {
       if (sp.utility) continue;
       const opts = slotOptions(a, sp);
       const slot = this.mode.kind === 'spell' && this.mode.spell === sp.id ? this.mode.slot : opts[0];
-      const why = sp.time === 'reaction' ? 'reaction' : slot === undefined ? 'No spell slots left' : castBlocker(c, a, sp, slot);
-      const level = sp.uses ? 'Channel Divinity' : sp.level === 0 ? 'Cantrip' : `${ORDINAL[sp.level]}-level ${sp.school}`;
+      const why = sp.time === 'reaction' || sp.time === 'onHit' ? 'reaction' : slot === undefined ? 'No spell slots left' : castBlocker(c, a, sp, slot);
+      const level = sp.uses ? (sp.school === 'Channel Divinity' ? 'Channel Divinity' : sp.school) : sp.level === 0 ? 'Cantrip' : `${ORDINAL[sp.level]}-level ${sp.school}`;
+      const st = spellStats(a, sp);
       const stats = [
-        sp.time === 'bonus' ? 'Bonus Action' : sp.time === 'reaction' ? 'Reaction' : 'Action',
+        sp.time === 'bonus' ? 'Bonus Action' : sp.time === 'reaction' ? 'Reaction' : sp.time === 'onHit' ? 'Bonus Action, after a hit' : sp.time === 'attack' ? 'Part of the Attack action' : 'Action',
         sp.range === 0 ? 'Self' : sp.range === 5 ? 'Touch' : `${sp.range} ft`,
-        sp.attack ? `+${book.attack} to hit` : sp.save ? `${sp.save.toUpperCase()} save DC ${book.dc}` : '',
+        sp.attack ? `+${st.attack} to hit` : sp.save ? `${sp.save.toUpperCase()} save DC ${st.dc}` : '',
+        sp.free && (a.resourcesLeft[sp.free] ?? 0) > 0 ? 'Free casting ready' : '',
         sp.concentration ? 'Concentration' : '',
       ].filter(Boolean).join(' · ');
       out.push({
         key: `spell:${sp.id}`, icon: sp.icon, label: sp.name, cost: sp.time === 'reaction' ? 'reaction' : sp.time === 'bonus' ? 'bonus' : 'action',
         uses: sp.uses ? a.resourcesLeft[sp.uses] ?? 0 : undefined,
         enabled: why === null, selected: this.mode.kind === 'spell' && this.mode.spell === sp.id,
-        tip: `<div class="tip-head"><span class="tname">${esc(sp.name)}</span><span class="tsub">${level}</span></div><div class="tip-row"><span>${esc(stats)}</span></div><div class="tip-note">${esc(sp.description)}</div>${why && why !== 'reaction' ? `<div class="tip-warn">${esc(why)}</div>` : ''}${sp.time === 'reaction' ? '<div class="tip-good">You will be asked when it can be used.</div>' : ''}`,
+        tip: `<div class="tip-head"><span class="tname">${esc(sp.name)}</span><span class="tsub">${level}</span></div><div class="tip-row"><span>${esc(stats)}</span></div><div class="tip-note">${esc(sp.description)}</div>${why && why !== 'reaction' ? `<div class="tip-warn">${esc(why)}</div>` : ''}${sp.time === 'reaction' || sp.time === 'onHit' ? '<div class="tip-good">You will be asked when it can be used.</div>' : ''}`,
       });
     }
     return out;
@@ -693,6 +718,7 @@ export class CombatView {
       let status = [...v.conds].map((k) => CONDITION_NAME[k]).filter(Boolean).join(', ');
       if (v.hp === 0 && !v.dead && !v.conds.has('stable')) status = `Dying — saves ${cr.deathSaves.success}✓ ${cr.deathSaves.fail}✗`;
       if (v.dead) status = 'Dead';
+      if (cr.tempHp > 0 && !v.dead) status = `+${cr.tempHp} temp HP${status ? ` · ${status}` : ''}`;
       if (cr.concentration && !v.dead) status = `◈ ${spellOf(cr, cr.concentration).name}${status ? ` · ${status}` : ''}`;
       return { id: cr.id, name: cr.name, hp: v.hp, maxHp: cr.maxHp, status: status || cr.description || '', active: cr.id === this.activeId, dead: v.dead, side: cr.side };
     }));
@@ -725,9 +751,9 @@ export class CombatView {
       const options: NonNullable<HotbarState['picker']>['options'] = [];
       // upcasting: every slot level that has a slot left
       const levels = slotOptions(a, sp);
-      if (sp.level > 0 && levels.length > 1) for (const l of levels) options.push({ key: `slotLevel:${l}`, label: `${ORDINAL[l]} (${a.slotsLeft[l]})`, selected: l === m.slot, enabled: true });
+      if (sp.level > 0 && levels.length > 1) for (const l of levels) options.push({ key: `slotLevel:${l}`, label: l === 0 ? 'Free' : `${ORDINAL[l]} (${a.slotsLeft[l]})`, selected: l === m.slot, enabled: true });
       if (sp.shape.kind === 'multi') options.push({ key: 'castNow', label: `Cast now (${m.targets.length}/${targetCount(sp, m.slot)})`, selected: false, enabled: m.targets.length > 0 });
-      state.picker = { title: `${sp.name}${sp.level > 0 ? ` · ${ORDINAL[m.slot]} level` : ''}`, options };
+      state.picker = { title: `${sp.name}${sp.level > 0 ? ` · ${m.slot === 0 ? 'free casting' : `${ORDINAL[m.slot]} level`}` : ''}`, options };
     }
     this.hud.renderHotbar(state);
   }
@@ -892,6 +918,12 @@ export class CombatView {
         return;
       }
       case 'concentration': case 'maxHp': this.refreshHud(); return;
+      case 'tempHp': {
+        const p = this.head(e.target);
+        if (e.tempHp > 0) this.hud.float(p.x, p.y, `${e.tempHp} temp HP`, 'heal');
+        this.refreshHud();
+        return;
+      }
       case 'deathSave': {
         const p = this.head(e.target, 0.2);
         this.hud.float(p.x, p.y, `Death save: ${e.natural}  (${e.success}✓ ${e.fail}✗)`, e.natural >= 10 ? 'roll' : 'dmg');
@@ -911,7 +943,14 @@ export class CombatView {
   private async animateCast(e: Extract<GameEvent, { type: 'cast' }>) {
     const r = this.r;
     const caster = r.figures.get(e.actor)!;
-    const color = SPELL_COLOR[e.spell] ?? 0xffffff;
+    const def = this.combat.get(e.actor).spellcasting?.spells.find((s) => s.id === e.spell);
+    const color = (e.spell.startsWith('breath') && def?.damage ? DAMAGE_COLOR[def.damage.type] : undefined) ?? SPELL_COLOR[e.spell] ?? 0xffffff;
+    if (e.spell === 'divineSmite') {
+      // the smite rides on the weapon blow: a pillar of light on the target, no casting gesture
+      const t = e.targets[0];
+      if (t) await this.fx.column(this.vm.get(t)!.pos, color);
+      return;
+    }
     if (e.reaction) {
       // Shield: a flash of force around the caster
       const p = this.head(e.actor, 0.5); this.hud.float(p.x, p.y, 'Shield!', 'info');
@@ -921,14 +960,16 @@ export class CombatView {
     const first = e.targets.find((t) => t !== e.actor);
     const aim = first ? this.vm.get(first)!.pos : e.point;
     if (aim) r.face(e.actor, aim.x, aim.y);
-    const offensive = ['fireBolt', 'rayOfFrost', 'shockingGrasp', 'magicMissile', 'scorchingRay', 'guidingBolt', 'burningHands', 'sleep', 'sacredFlame', 'tollTheDead', 'inflictWounds', 'divineSpark'].includes(e.spell);
+    const offensive = ['fireBolt', 'rayOfFrost', 'shockingGrasp', 'magicMissile', 'scorchingRay', 'guidingBolt', 'burningHands', 'sleep', 'sacredFlame', 'tollTheDead', 'inflictWounds', 'divineSpark', 'chillTouch', 'poisonSpray', 'produceFlame', 'breathCone', 'breathLine'].includes(e.spell);
     const anim = offensive ? 'Spellcast_Shoot' : 'Spellcast_Raise';
     const play = caster.character.once(anim, { impactAt: 0.5, speed: 1.25 });
     // a glow in the caster's hands while the spell gathers
     this.fx.rise(this.chest(e.actor, 0.7), color, 10, 0.5);
     await play.impact;
     switch (e.spell) {
-      case 'burningHands': await this.fx.area(e.area ?? [], color, 'fire'); break;
+      case 'burningHands': case 'breathCone': case 'breathLine': await this.fx.area(e.area ?? [], color, 'fire'); break;
+      case 'divineFavor': case 'sacredWeapon': case 'heroism': case 'protectionFromEvilAndGood':
+        await this.fx.rise(this.chest(first ?? e.actor, 0.4), color, 18, 0.6); break;
       case 'sleep': await this.fx.area(e.area ?? [], color, 'mist'); break;
       case 'sacredFlame': if (first) await this.fx.column(this.vm.get(first)!.pos, color); break;
       case 'divineSpark':
