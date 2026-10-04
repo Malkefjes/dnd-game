@@ -45,6 +45,8 @@ export interface AttackProfile {
   consumes?: string;
   /** Goblin-style "plus 1d4 if the attack roll had Advantage". */
   bonusOnAdvantage?: DiceExpr;
+  /** Extra damage of another type on a hit (Hobgoblin Longbow: + 3d4 Poison). */
+  extraDamage?: { dice: DiceExpr; type: DamageType };
   /** Weapon attack (vs. a natural / special monster attack). */
   weapon: boolean;
   /** Spell attack: the spell's id. */
@@ -57,7 +59,7 @@ export type FeatureId =
   | 'secondWind' | 'actionSurge' | 'tacticalMind' | 'fightingStyleDefense' | 'weaponMastery'
   | 'sneakAttack' | 'cunningAction' | 'expertise'
   | 'savageAttacker' | 'alert' | 'luck' | 'brave' | 'halflingNimbleness' | 'naturallyStealthy' | 'dwarvenResilience' | 'darkvision'
-  | 'nimbleEscape' | 'redirectAttack'
+  | 'nimbleEscape' | 'redirectAttack' | 'packTactics'
   // Milestone 2: casters and level 3 subclasses
   | 'spellcasting' | 'channelDivinity' | 'discipleOfLife' | 'potentCantrip' | 'tough' | 'feyAncestry' | 'keenSenses' | 'trance'
   | 'improvedCritical' | 'remarkableAthlete' | 'steadyAim' | 'assassinate';

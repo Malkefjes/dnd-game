@@ -305,6 +305,7 @@ export class Combat {
     if (this.cond(target, 'unconscious')) adv.push('target unconscious');
     if (attacker.conditions.some((x) => x.id === 'vexing' && x.against === target.id)) adv.push('vex');
     if (this.cond(target, 'guided')) adv.push('Guiding Bolt');
+    if (this.has(attacker, 'packTactics') && this.alliesOf(attacker).some((a) => !this.incapacitated(a) && distanceFt(a.pos, target.pos) <= 5)) adv.push('Pack Tactics');
     if (this.cond(attacker, 'steadyAim')) adv.push('Steady Aim');
     if (this.has(attacker, 'assassinate') && this.round === 1 && target.turnsStarted === 0) adv.push('Assassinate');
     const mode = resolveAdvantage(adv.length, dis.length);
@@ -326,6 +327,7 @@ export class Combat {
     const sneak = this.sneakAttackApplies(attacker, atk, target, mode, from);
     if (sneak) extraDice += (attacker.sneakAttackDice ?? 1) * 3.5;
     if (atk.bonusOnAdvantage && mode === 'advantage') extraDice += averageDice(atk.bonusOnAdvantage);
+    if (atk.extraDamage) extraDice += averageDice(atk.extraDamage.dice);
     perHit += extraDice;
     const expected = Math.max(0, chance * perHit + critChance * (diceAvg + extraDice));
     // Potent Cantrip: a missed cantrip still deals half damage
@@ -643,6 +645,11 @@ export class Combat {
       if (this.has(attacker, 'assassinate') && this.round === 1) { amount += attacker.level ?? 0; parts.push(`Assassinate ${attacker.level ?? 0}`); }
     }
     this.applyDamage(target, Math.max(1, amount), atk.damageType, parts, attacker, crit);
+    // a rider of another damage type (rolled last; a separate instance of damage)
+    if (atk.extraDamage && this.isAlive(target)) {
+      const r = rollDice(this.rng, atk.extraDamage.dice, crit);
+      this.applyDamage(target, r.total, atk.extraDamage.type, [], attacker, crit);
+    }
     if (this.isAlive(target)) this.applyMastery(attacker, atk, target);
     if (atk.spell && this.isAlive(target)) spellAttackRider(this, attacker, atk.spell, target);
   }

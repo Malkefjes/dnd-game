@@ -105,13 +105,14 @@ function segmentHitsSquare(px: number, py: number, qx: number, qy: number, cx: n
   const minX = cx + inset, maxX = cx + 1 - inset, minY = cy + inset, maxY = cy + 1 - inset;
   let t0 = 0, t1 = 1;
   const dx = qx - px, dy = qy - py;
-  const clip = (p: number, q: number) => {
-    if (p === 0) return q >= 0;
+  // the four slab tests, unrolled (this is the hottest loop in the AI)
+  const ps = [-dx, dx, -dy, dy], qs = [px - minX, maxX - px, py - minY, maxY - py];
+  for (let i = 0; i < 4; i++) {
+    const p = ps[i], q = qs[i];
+    if (p === 0) { if (q < 0) return false; continue; }
     const t = q / p;
     if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
-    return true;
-  };
-  if (!clip(-dx, px - minX) || !clip(dx, maxX - px) || !clip(-dy, py - minY) || !clip(dy, maxY - py)) return false;
+  }
   return t0 < t1;
 }
 
@@ -142,16 +143,17 @@ export function computeCover(grid: Grid, attacker: Pos, target: Pos, creatureSqu
   return cover;
 }
 
-const coverCache = new WeakMap<Grid, Map<number, Cover>>();
+const COVERS: Cover[] = ['none', 'half', 'three-quarters', 'total'];
+const coverCache = new WeakMap<Grid, Int8Array>();
 
-/** Cover from terrain alone. Terrain never changes mid-fight, so results are memoised per grid. */
+/** Cover from terrain alone. Terrain never changes mid-fight, so results are memoised per grid (0 = not yet known). */
 function terrainCover(grid: Grid, attacker: Pos, target: Pos): Cover {
-  let cache = coverCache.get(grid);
-  if (!cache) { cache = new Map(); coverCache.set(grid, cache); }
   const n = grid.width * grid.height;
+  let cache = coverCache.get(grid);
+  if (!cache) { cache = new Int8Array(n * n); coverCache.set(grid, cache); }
   const key = (attacker.y * grid.width + attacker.x) * n + target.y * grid.width + target.x;
-  const hit = cache.get(key);
-  if (hit) return hit;
+  const hit = cache[key];
+  if (hit) return COVERS[hit - 1];
   const lo = 0.15, hi = 0.85;
   const from: [number, number][] = [[0.5, 0.5], [lo, lo], [hi, lo], [lo, hi], [hi, hi]].map(([a, b]) => [attacker.x + a, attacker.y + b]);
   const to: [number, number][] = [];
@@ -166,7 +168,7 @@ function terrainCover(grid: Grid, attacker: Pos, target: Pos): Cover {
     if (best === 0) break;
   }
   const cover: Cover = best === 0 ? 'none' : best <= 4 ? 'half' : best < to.length ? 'three-quarters' : 'total';
-  cache.set(key, cover);
+  cache[key] = COVERS.indexOf(cover) + 1;
   return cover;
 }
 

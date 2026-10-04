@@ -4,7 +4,7 @@ import { RiggedRng } from '../src/engine/dice';
 import { Grid, type Pos } from '../src/engine/grid';
 import type { CreatureDef } from '../src/engine/types';
 import { torvald, nyx } from '../src/data/heroes';
-import { goblinWarrior, goblinBoss, goblinMinion } from '../src/data/monsters';
+import { goblinWarrior, goblinBoss, goblinMinion, hobgoblinWarrior } from '../src/data/monsters';
 
 const OPEN = [
   '..........',
@@ -293,5 +293,15 @@ describe('features', () => {
     c.execute({ type: 'disengage', actor: 'g', via: 'bonus' });
     expect(attacks(c.execute({ type: 'move', actor: 'g', to: { x: 6, y: 0 } }))).toHaveLength(0);
     expect(() => c.execute({ type: 'dash', actor: 'g', via: 'bonus' })).toThrow(RuleError);
+  });
+});
+
+describe('hobgoblins', () => {
+  it('Pack Tactics gives Advantage with an ally next to the target; the Longbow adds 3d4 Poison', () => {
+    const { c, rng } = arena([[hobgoblinWarrior('h'), { x: 5, y: 0 }], [torvald(2), { x: 0, y: 0 }], [goblinWarrior('g'), { x: 1, y: 0 }]], [20, 1, 1]);
+    expect(c.previewAttack(c.get('h'), 'longbow', c.get('torvald')).reasons).toContain('+ Pack Tactics');
+    rng.push(18, 2, 4, 1, 1, 1); // advantage 18; 1d8 4 + 1; poison 3d4 = 3
+    c.execute({ type: 'attack', actor: 'h', attack: 'longbow', target: 'torvald' });
+    expect(c.get('torvald').hp).toBe(22 - 5 - 3);
   });
 });

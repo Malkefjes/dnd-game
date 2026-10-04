@@ -39,6 +39,23 @@ export function goblinMinion(id: string, name = 'Goblin Minion'): CreatureDef {
   };
 }
 
+/** Hobgoblin Warrior — Medium Fey (Goblinoid), CR 1/2. Half plate and shield; Pack Tactics. */
+export function hobgoblinWarrior(id: string, name = 'Hobgoblin Warrior'): CreatureDef {
+  const longsword: AttackProfile = { id: 'longsword', name: 'Longsword', kind: 'melee', reach: 5, toHit: 3, damage: parseDice('2d10+1'), damageType: 'slashing', ability: 'str', abilityMod: 1, weapon: true };
+  const longbow: AttackProfile = {
+    id: 'longbow', name: 'Longbow', kind: 'ranged', reach: 0, range: [150, 600], toHit: 3, damage: parseDice('1d8+1'), damageType: 'piercing',
+    ability: 'dex', abilityMod: 1, weapon: true, extraDamage: { dice: parseDice('3d4'), type: 'poison' },
+  };
+  return {
+    id, name, side: 'enemy', controller: 'ai', size: 'medium', pc: false, cr: '1/2', xp: 100, model: 'hobgoblin', type: 'fey',
+    abilities: { str: 13, dex: 12, con: 12, int: 10, wis: 10, cha: 9 }, pb: 2, maxHp: 11, ac: 18, speed: 30,
+    saveProfs: [], skills: { perception: 0 },
+    attacks: [longsword, longbow], attacksPerAction: 1,
+    features: ['packTactics', 'darkvision'],
+    description: 'Longsword 2d10+1, or Longbow 1d8+1 plus 3d4 Poison. Pack Tactics: Advantage when an ally is next to the target.',
+  };
+}
+
 /** Goblin Boss — Small Fey (Goblinoid), CR 1. Multiattack: two Scimitar/Shortbow attacks. */
 export function goblinBoss(id: string, name = 'Goblin Boss'): CreatureDef {
   return {
