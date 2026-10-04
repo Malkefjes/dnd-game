@@ -53,9 +53,11 @@ size on a real GPU (the owner checks on Pages).
 
 **The engine side:** a real character builder replaces the hand-written heroes.
 
-- [ ] `buildCharacter(choices, level)`: species + class + subclass + background + ability scores + skill picks +
+- [x] `buildCharacter(choices, level)`: species + class + subclass + background + ability scores + skill picks +
       equipment + spells → a `CreatureDef`. Torvald, Nyx, Maren and Elowen become saved sets of choices, so the old
-      tests keep passing.
+      tests keep passing. *(Done: `src/data/build/`; `tests/builder.test.ts` checks the rebuilt heroes against the
+      old hand-written ones, kept in `tests/fixtures/legacy-heroes.ts`. The data and builder cover everything below;
+      the engine rules for the new traits, feats and the Paladin come next, then the creator screens.)*
 - [ ] **Species (2024 PHB):** Aasimar, Dragonborn, Dwarf, Elf (Drow, High, Wood), Gnome, Goliath, Halfling, Human,
       Orc, Tiefling (Abyssal, Chthonic, Infernal). Every trait that matters in a fight: Darkvision, resistances,
       breath weapons, Healing Hands, Relentless Endurance, Adrenaline Rush, Stone's Endurance, Large Form, the

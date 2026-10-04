@@ -31,6 +31,37 @@ export const SPELLS = {
     description: 'Wisdom save or 1d8 Necrotic damage — 1d12 if the target is missing any Hit Points.',
   },
 
+  chillTouch: {
+    id: 'chillTouch', name: 'Chill Touch', level: 0, school: 'Necromancy', time: 'action', range: 5,
+    shape: { kind: 'single' }, affects: 'enemy', attack: 'melee', damage: { dice: '1d10', type: 'necrotic' }, icon: 'chill',
+    description: 'Melee spell attack, 1d10 Necrotic damage, and the target can\'t regain Hit Points until the end of your next turn.',
+  },
+  poisonSpray: {
+    id: 'poisonSpray', name: 'Poison Spray', level: 0, school: 'Necromancy', time: 'action', range: 30,
+    shape: { kind: 'single' }, affects: 'enemy', attack: 'ranged', damage: { dice: '1d12', type: 'poison' }, icon: 'poison',
+    description: 'Ranged spell attack, 1d12 Poison damage. (Most undead are immune to poison.)',
+  },
+  produceFlame: {
+    id: 'produceFlame', name: 'Produce Flame', level: 0, school: 'Conjuration', time: 'action', range: 60,
+    shape: { kind: 'single' }, affects: 'enemy', attack: 'ranged', damage: { dice: '1d8', type: 'fire' }, icon: 'fireBolt',
+    description: 'Hurl the flame in your hand: ranged spell attack, 1d8 Fire damage. (You light the flame before a fight, as a Bonus Action; it lasts 10 minutes.)',
+  },
+  spareTheDying: {
+    id: 'spareTheDying', name: 'Spare the Dying', level: 0, school: 'Necromancy', time: 'action', range: 15,
+    shape: { kind: 'single' }, affects: 'ally', icon: 'help',
+    description: 'A creature within 15 ft that has 0 Hit Points and isn\'t dead becomes Stable.',
+  },
+  // cantrips that do nothing in a fight yet: listed on the sheet, kept off the hotbar
+  light: { id: 'light', name: 'Light', level: 0, school: 'Evocation', time: 'action', range: 5, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'spark', description: 'An object sheds Bright Light in a 20-foot radius for an hour.' },
+  guidance: { id: 'guidance', name: 'Guidance', level: 0, school: 'Divination', time: 'action', range: 5, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'bless', description: 'An ally adds 1d4 to ability checks with one skill you choose. Concentration, 1 minute.' },
+  thaumaturgy: { id: 'thaumaturgy', name: 'Thaumaturgy', level: 0, school: 'Transmutation', time: 'action', range: 30, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'spark', description: 'Minor wonders: a booming voice, flickering flames, trembling ground.' },
+  prestidigitation: { id: 'prestidigitation', name: 'Prestidigitation', level: 0, school: 'Transmutation', time: 'action', range: 10, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'spark', description: 'Small magical tricks: clean, chill, warm, flavour, a harmless sensory effect.' },
+  mageHand: { id: 'mageHand', name: 'Mage Hand', level: 0, school: 'Conjuration', time: 'action', range: 30, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'shove', description: 'A spectral hand that can manipulate objects up to 10 pounds within 30 ft.' },
+  druidcraft: { id: 'druidcraft', name: 'Druidcraft', level: 0, school: 'Transmutation', time: 'action', range: 30, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'spark', description: 'Small nature effects: predict the weather, make a flower bloom, light or snuff a candle.' },
+  dancingLights: { id: 'dancingLights', name: 'Dancing Lights', level: 0, school: 'Illusion', time: 'action', range: 120, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'spark', description: 'Up to four hovering lights. Concentration, 1 minute.' },
+  minorIllusion: { id: 'minorIllusion', name: 'Minor Illusion', level: 0, school: 'Illusion', time: 'action', range: 30, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'misty', description: 'A sound or a still image of an object.' },
+  mending: { id: 'mending', name: 'Mending', level: 0, school: 'Transmutation', time: 'action', range: 5, shape: { kind: 'self' }, affects: 'ally', utility: true, icon: 'cure', description: 'Repairs a single break or tear in an object.' },
+
   // ------------------------------------------------------------ 1st level
   magicMissile: {
     id: 'magicMissile', name: 'Magic Missile', level: 1, school: 'Evocation', time: 'action', range: 120,
@@ -83,6 +114,32 @@ export const SPELLS = {
     description: 'A creature you touch makes a Constitution save: 2d10 Necrotic damage, half on a success. +1d10 per slot level above 1st.',
   },
 
+  mageArmor: {
+    id: 'mageArmor', name: 'Mage Armor', level: 1, school: 'Abjuration', time: 'action', range: 5, utility: true,
+    shape: { kind: 'self' }, affects: 'ally', icon: 'faith',
+    description: 'Base AC becomes 13 + DEX for 8 hours while you wear no armor. Cast each morning, so it\'s always up.',
+  },
+  divineSmite: {
+    id: 'divineSmite', name: 'Divine Smite', level: 1, school: 'Evocation', time: 'onHit', range: 0,
+    shape: { kind: 'self' }, affects: 'enemy', damage: { dice: '2d8', type: 'radiant', upcast: '1d8' }, icon: 'smite',
+    description: 'Bonus Action right after you hit with a melee weapon or an Unarmed Strike: 2d8 extra Radiant damage, +1d8 against a Fiend or Undead. +1d8 per slot level above 1st. You\'ll be asked after each hit.',
+  },
+  divineFavor: {
+    id: 'divineFavor', name: 'Divine Favor', level: 1, school: 'Transmutation', time: 'bonus', range: 0,
+    shape: { kind: 'self' }, affects: 'ally', icon: 'favor',
+    description: 'Bonus Action: for 1 minute your weapon attacks deal an extra 1d4 Radiant damage on a hit.',
+  },
+  heroism: {
+    id: 'heroism', name: 'Heroism', level: 1, school: 'Enchantment', time: 'action', range: 5, concentration: true,
+    shape: { kind: 'single' }, affects: 'ally', icon: 'heroism',
+    description: 'A creature you touch is immune to the Frightened condition and gains Temporary Hit Points equal to your spellcasting modifier at the start of each of its turns. Concentration.',
+  },
+  protectionFromEvilAndGood: {
+    id: 'protectionFromEvilAndGood', name: 'Protection from Evil and Good', level: 1, school: 'Abjuration', time: 'action', range: 5, concentration: true,
+    shape: { kind: 'single' }, affects: 'ally', consumes: 'holyWater', icon: 'ward',
+    description: 'A creature you touch is warded against Aberrations, Celestials, Elementals, Fey, Fiends and Undead: they have Disadvantage on attack rolls against it, and can\'t Charm, Frighten or possess it. Consumes a flask of Holy Water. Concentration.',
+  },
+
   // ------------------------------------------------------------ 2nd level
   scorchingRay: {
     id: 'scorchingRay', name: 'Scorching Ray', level: 2, school: 'Evocation', time: 'action', range: 120,
@@ -116,9 +173,54 @@ export const SPELLS = {
     shape: { kind: 'emanation', radius: 30 }, affects: 'ally', icon: 'preserve',
     description: 'Channel Divinity: restore 5 × Cleric level HP, divided among Bloodied allies within 30 ft. Nobody goes above half their HP maximum.',
   },
+
+  // ------------------------------------------------------------ Paladin
+  layOnHands: {
+    id: 'layOnHands', name: 'Lay on Hands', level: 0, school: 'Paladin', time: 'bonus', range: 5, uses: 'layOnHands',
+    shape: { kind: 'single' }, affects: 'ally', icon: 'hands',
+    description: 'Bonus Action: touch a creature and restore Hit Points from your pool (5 × Paladin level, refilled by a Long Rest). As much as it needs, or what\'s left.',
+  },
+  sacredWeapon: {
+    id: 'sacredWeapon', name: 'Sacred Weapon', level: 0, school: 'Channel Divinity', time: 'attack', range: 0, uses: 'channelDivinity',
+    shape: { kind: 'self' }, affects: 'ally', icon: 'sacred',
+    description: 'Channel Divinity, as you take the Attack action: for 10 minutes add your Charisma modifier (at least +1) to attack rolls with melee weapons, which can deal Radiant damage. Doesn\'t use up an attack.',
+  },
+
+  // ------------------------------------------------------------ species
+  healingHands: {
+    id: 'healingHands', name: 'Healing Hands', level: 0, school: 'Aasimar', time: 'action', range: 5, uses: 'healingHands',
+    shape: { kind: 'single' }, affects: 'ally', heal: { dice: '2d4' }, icon: 'hands',
+    description: 'Touch a creature: it regains a number of d4s equal to your Proficiency Bonus in Hit Points. Once per Long Rest.',
+  },
+  cloudsJaunt: {
+    id: 'cloudsJaunt', name: 'Cloud\'s Jaunt', level: 0, school: 'Goliath', time: 'bonus', range: 30, uses: 'giantAncestry',
+    shape: { kind: 'point' }, affects: 'ally', icon: 'misty',
+    description: 'Bonus Action: teleport up to 30 ft to an unoccupied space you can see. Proficiency Bonus uses per Long Rest.',
+  },
+  adrenalineRush: {
+    id: 'adrenalineRush', name: 'Adrenaline Rush', level: 0, school: 'Orc', time: 'bonus', range: 0, uses: 'adrenalineRush',
+    shape: { kind: 'self' }, affects: 'ally', icon: 'dash',
+    description: 'Bonus Action: Dash, and gain Temporary Hit Points equal to your Proficiency Bonus. Proficiency Bonus uses per Short or Long Rest.',
+  },
+  breathCone: {
+    id: 'breathCone', name: 'Breath Weapon (cone)', level: 0, school: 'Dragonborn', time: 'attack', range: 0, uses: 'breathWeapon',
+    shape: { kind: 'cone', length: 15 }, affects: 'any', save: 'dex', half: true, damage: { dice: '1d10', type: 'fire' }, icon: 'cone',
+    description: 'Replaces one attack: a 15-ft Cone. Dexterity save (DC 8 + CON + PB), 1d10 damage of your ancestry\'s type, half on a success. Proficiency Bonus uses per Long Rest.',
+  },
+  breathLine: {
+    id: 'breathLine', name: 'Breath Weapon (line)', level: 0, school: 'Dragonborn', time: 'attack', range: 0, uses: 'breathWeapon',
+    shape: { kind: 'line', length: 30 }, affects: 'any', save: 'dex', half: true, damage: { dice: '1d10', type: 'fire' }, icon: 'line',
+    description: 'Replaces one attack: a 30-ft by 5-ft Line. Dexterity save (DC 8 + CON + PB), 1d10 damage of your ancestry\'s type, half on a success. Proficiency Bonus uses per Long Rest.',
+  },
 } satisfies Record<string, SpellDef>;
 
 export type SpellId = keyof typeof SPELLS;
+
+/** Half-caster spell slots by class level (2024 Paladin table). */
+export function halfCasterSlots(level: number): number[] {
+  const table: number[][] = [[], [0, 2], [0, 2], [0, 3], [0, 3], [0, 4, 2]];
+  return [...(table[Math.min(level, 5)] ?? [0])];
+}
 
 /** Full-caster spell slots by class level (2024 Cleric / Wizard table). */
 export function fullCasterSlots(level: number): number[] {

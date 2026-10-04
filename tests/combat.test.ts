@@ -302,7 +302,8 @@ describe('hobgoblins', () => {
     expect(c.previewAttack(c.get('h'), 'longbow', c.get('torvald')).reasons).toContain('+ Pack Tactics');
     rng.push(18, 2, 4, 1, 1, 1); // advantage 18; 1d8 4 + 1; poison 3d4 = 3
     c.execute({ type: 'attack', actor: 'h', attack: 'longbow', target: 'torvald' });
-    expect(c.get('torvald').hp).toBe(22 - 5 - 3);
+    // Torvald is a dwarf: Dwarven Resilience halves the poison (3 → 1)
+    expect(c.get('torvald').hp).toBe(22 - 5 - 1);
   });
 });
 

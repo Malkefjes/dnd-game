@@ -13,9 +13,18 @@ export type DamageType = 'slashing' | 'piercing' | 'bludgeoning' | 'fire' | 'col
 
 export type Mastery = 'cleave' | 'graze' | 'nick' | 'push' | 'sap' | 'slow' | 'topple' | 'vex';
 
-export type Skill = 'acrobatics' | 'athletics' | 'stealth' | 'perception' | 'medicine' | 'insight' | 'sleightOfHand' | 'survival' | 'intimidation';
+export type Skill =
+  | 'acrobatics' | 'animalHandling' | 'arcana' | 'athletics' | 'deception' | 'history' | 'insight' | 'intimidation' | 'investigation'
+  | 'medicine' | 'nature' | 'perception' | 'performance' | 'persuasion' | 'religion' | 'sleightOfHand' | 'stealth' | 'survival';
 export const SKILL_ABILITY: Record<Skill, Ability> = {
-  acrobatics: 'dex', athletics: 'str', stealth: 'dex', perception: 'wis', medicine: 'wis', insight: 'wis', sleightOfHand: 'dex', survival: 'wis', intimidation: 'cha',
+  acrobatics: 'dex', animalHandling: 'wis', arcana: 'int', athletics: 'str', deception: 'cha', history: 'int', insight: 'wis',
+  intimidation: 'cha', investigation: 'int', medicine: 'wis', nature: 'int', perception: 'wis', performance: 'cha', persuasion: 'cha',
+  religion: 'int', sleightOfHand: 'dex', stealth: 'dex', survival: 'wis',
+};
+export const SKILL_NAME: Record<Skill, string> = {
+  acrobatics: 'Acrobatics', animalHandling: 'Animal Handling', arcana: 'Arcana', athletics: 'Athletics', deception: 'Deception', history: 'History',
+  insight: 'Insight', intimidation: 'Intimidation', investigation: 'Investigation', medicine: 'Medicine', nature: 'Nature', perception: 'Perception',
+  performance: 'Performance', persuasion: 'Persuasion', religion: 'Religion', sleightOfHand: 'Sleight of Hand', stealth: 'Stealth', survival: 'Survival',
 };
 
 export type Side = 'party' | 'enemy';
@@ -51,6 +60,8 @@ export interface AttackProfile {
   weapon: boolean;
   /** Spell attack: the spell's id. */
   spell?: string;
+  /** Great Weapon Fighting: 1s and 2s on damage dice count as 3s. */
+  gwf?: boolean;
   /** Cantrip (Potent Cantrip applies). */
   cantrip?: boolean;
 }
@@ -60,6 +71,13 @@ export type FeatureId =
   | 'sneakAttack' | 'cunningAction' | 'expertise'
   | 'savageAttacker' | 'alert' | 'luck' | 'brave' | 'halflingNimbleness' | 'naturallyStealthy' | 'dwarvenResilience' | 'darkvision'
   | 'nimbleEscape' | 'redirectAttack' | 'packTactics' | 'undeadFortitude'
+  // Milestone 3 character options
+  | 'fightingStyleArchery' | 'fightingStyleDueling' | 'fightingStyleGreatWeapon' | 'fightingStyleTwoWeapon'
+  | 'layOnHands' | 'paladinsSmite' | 'sacredWeapon' | 'divineOrderProtector' | 'divineOrderThaumaturge'
+  | 'healer' | 'lucky' | 'tavernBrawler' | 'magicInitiate' | 'skilled'
+  | 'relentlessEndurance' | 'adrenalineRush' | 'breathWeapon' | 'gnomishCunning' | 'dwarvenToughness' | 'celestialResistance'
+  | 'healingHands' | 'stonecunning' | 'heroicInspiration'
+  | 'cloudsJaunt' | 'firesBurn' | 'frostsChill' | 'hillsTumble' | 'stonesEndurance' | 'stormsThunder'
   // Milestone 2: casters and level 3 subclasses
   | 'spellcasting' | 'channelDivinity' | 'discipleOfLife' | 'potentCantrip' | 'tough' | 'feyAncestry' | 'keenSenses' | 'trance'
   | 'improvedCritical' | 'remarkableAthlete' | 'steadyAim' | 'assassinate';
@@ -124,7 +142,9 @@ export type SpellShape =
   | { kind: 'point' }
   | { kind: 'self' }
   /** Everyone of yours within `radius` ft of you (Preserve Life). */
-  | { kind: 'emanation'; radius: number };
+  | { kind: 'emanation'; radius: number }
+  /** A line from the caster, `length` ft long and 5 ft wide (a dragonborn's breath). */
+  | { kind: 'line'; length: number };
 
 export interface SpellDef {
   id: string;
@@ -132,7 +152,8 @@ export interface SpellDef {
   /** 0 = cantrip (or a Channel Divinity option when `uses` is set). */
   level: number;
   school: string;
-  time: 'action' | 'bonus' | 'reaction';
+  /** `attack` replaces one attack of the Attack action (Breath Weapon); `onHit` is offered right after a hit (Divine Smite). */
+  time: 'action' | 'bonus' | 'reaction' | 'attack' | 'onHit';
   /** Feet. 0 = self, 5 = touch. */
   range: number;
   shape: SpellShape;
@@ -149,6 +170,16 @@ export interface SpellDef {
   heal?: { dice: string; upcast?: string; addMod?: boolean };
   /** Spends this resource instead of a spell slot (Channel Divinity). */
   uses?: string;
+  /** No effect in a fight yet (Light, Guidance…): listed on the sheet, not on the hotbar. */
+  utility?: boolean;
+  /** Cast with another ability than the class's (Magic Initiate, species spells). */
+  castWith?: { ability: Ability; dc: number; attack: number };
+  /** Castable once per Long Rest without a slot (Magic Initiate, Paladin's Smite): the resource that tracks it. */
+  free?: string;
+  /** Consumes an item each casting (Protection from Evil and Good: a flask of Holy Water). */
+  consumes?: string;
+  /** Always prepared (domain / oath spells, Paladin's Smite): doesn't count against the prepared limit. */
+  always?: boolean;
   description: string;
   icon: string;
 }

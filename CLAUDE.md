@@ -29,8 +29,9 @@ non-SRD 2024 content (all subclasses, etc.) is fine. Inspiration: Baldur's Gate 
 **Milestone 1 is done:** "The Goblin Den", playable with click-to-move / click-to-attack, the hotbar, AI turns,
 animations, death saves, victory and defeat screens.
 
-**Milestone 3 (The Hollow Abbey) is under way**, plan in [`docs/milestone-3.md`](docs/milestone-3.md). Phase 0 is
-done: the game now starts on a title screen (New Game / Continue) and the premade party, at level 1, explores two
+**Milestone 3 (The Hollow Abbey) is under way**, plan in [`docs/milestone-3.md`](docs/milestone-3.md). Phase 1
+(character creator + Paladin) has started: the character builder is in, and the four heroes are now built from
+creator choices (levels 1–4). Phase 0 is done: the game now starts on a title screen (New Game / Continue) and the premade party, at level 1, explores two
 test floors (abbey and crypt) and fights skeletons and zombies. The goblin den is dev-only (`?den=1`).
 
 **Milestone 2 is done:** a party of four at level 3 with spellcasting. Torvald (Dwarf Fighter 3, Champion),
@@ -91,7 +92,9 @@ src/engine/   rules: pure TypeScript, no DOM/three. Seeded RNG. Fully unit-teste
   combat.ts     Combat state machine: execute(Command) → GameEvent[]; all action rules live here
   spells.ts     spellcasting: slots, targeting/areas, resolution, concentration, Shield, Sleep, Spiritual Weapon
   ai.ts         TacticalAI: one-turn utility planner over attacks and spells; turn() is a command generator
-src/data/     2024 content: weapons.ts, spells.ts (SPELLS table), heroes.ts (levels 1–3), monsters.ts
+src/data/     2024 content: weapons.ts (all weapons, starting armor), spells.ts (SPELLS table), monsters.ts,
+              heroes.ts (the four presets as creator choices), build/ (species.ts, backgrounds.ts with origin
+              feats, classes.ts with kits, builder.ts: buildCharacter(choices, level) + validateChoices)
 src/world/    the campaign, pure TS: world.ts (party state, floors, doors, stairs, fights in and out, saves),
               map.ts (map format v2 + validator)
 src/data/maps abbey.ts (the abbey floors), den.ts (the old goblin den as a dev map)

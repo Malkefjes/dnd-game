@@ -70,6 +70,10 @@ export function slotOptions(c: Creature, spell: SpellDef): number[] {
 /** Why the spell can't be cast at all right now (economy, slots), or null. Targets are checked separately. */
 export function castBlocker(combat: Combat, c: Creature, spell: SpellDef, slot: number): string | null {
   if (spell.time === 'reaction') return 'Cast as a Reaction when you are hit';
+  if (spell.utility) return 'No use in a fight';
+  // Breath Weapon, Sacred Weapon and Divine Smite get their own timing rules with the Paladin's engine work
+  if (spell.time === 'attack' || spell.time === 'onHit') return 'Not playable yet';
+  if (spell.consumes && (c.inv[spell.consumes] ?? 0) <= 0) return `Needs ${spell.consumes === 'holyWater' ? 'a flask of Holy Water' : spell.consumes}`;
   if (combat.cond(c, 'incapacitated')) return 'Incapacitated';
   if (spell.time === 'action' && c.turn.actions <= 0) return 'No action left';
   if (spell.time === 'bonus' && c.turn.bonusActions <= 0) return 'Bonus Action already used';

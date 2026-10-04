@@ -608,6 +608,7 @@ export class CombatView {
         tip: '<div class="tname">Spiritual Weapon: Strike</div><div class="tip-note">Bonus Action: move the weapon up to 20 ft and make a melee spell attack against a creature within 5 ft of it.</div>' });
     }
     for (const sp of book.spells) {
+      if (sp.utility) continue;
       const opts = slotOptions(a, sp);
       const slot = this.mode.kind === 'spell' && this.mode.spell === sp.id ? this.mode.slot : opts[0];
       const why = sp.time === 'reaction' ? 'reaction' : slot === undefined ? 'No spell slots left' : castBlocker(c, a, sp, slot);
