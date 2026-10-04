@@ -1,0 +1,236 @@
+// Loads the KayKit (CC0) models and builds animated characters from them.
+import * as THREE from 'three';
+import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import type { Archetype } from './models';
+
+const BASE = `${import.meta.env.BASE_URL}assets/`;
+
+export const DUNGEON_PIECES = [
+  'floor_tile_small', 'floor_tile_small_broken_A', 'floor_tile_small_broken_B', 'floor_tile_small_decorated', 'floor_tile_small_weeds_A', 'floor_tile_small_weeds_B',
+  'floor_tile_large_rocks', 'floor_foundation_allsides', 'wall_half', 'wall_arched', 'pillar', 'stairs_narrow',
+  'barrel_large', 'barrel_small_stack', 'keg', 'crates_stacked', 'box_small', 'torch_mounted', 'banner_red', 'banner_patternA_red', 'banner_shield_brown',
+  'candle_triple', 'sword_shield_broken', 'coin_stack_small', 'bottle_A_green', 'trunk_small_A', 'column',
+] as const;
+export type Piece = typeof DUNGEON_PIECES[number];
+
+const CHARACTER_FILES = ['Knight', 'Rogue', 'Rogue_Hooded', 'Barbarian'] as const;
+type CharFile = typeof CHARACTER_FILES[number];
+
+/** How each archetype is dressed and animated. */
+interface ModelSpec {
+  file: CharFile;
+  /** World scale (x, y, z). 0.5 maps KayKit units onto our 5-ft squares. */
+  scale: [number, number, number];
+  /** Accessory nodes to show (weapons, shields, hats); all other accessories are hidden. */
+  show: string[];
+  /** Accessory shown only while shooting (swapped in for the melee weapons). */
+  rangedProp?: string;
+  melee: string;
+  offhand?: string;
+  ranged: string;
+  goblin?: boolean;
+}
+
+export const MODEL_SPECS: Record<Archetype, ModelSpec> = {
+  // a dwarf: shorter and broader than the human knight
+  fighter: { file: 'Knight', scale: [0.56, 0.45, 0.56], show: ['1H_Sword', 'Round_Shield', 'Knight_Helmet'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw' },
+  // a halfling
+  rogue: { file: 'Rogue_Hooded', scale: [0.4, 0.4, 0.4], show: ['Knife', 'Knife_Offhand', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Stab', offhand: 'Dualwield_Melee_Attack_Stab', ranged: '2H_Ranged_Shoot' },
+  goblin: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['Knife'], rangedProp: '1H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: 'Throw', goblin: true },
+  goblinArcher: { file: 'Rogue', scale: [0.36, 0.34, 0.36], show: ['2H_Crossbow', 'Rogue_Cape'], rangedProp: '2H_Crossbow', melee: '1H_Melee_Attack_Slice_Diagonal', ranged: '2H_Ranged_Shoot', goblin: true },
+  goblinBoss: { file: 'Barbarian', scale: [0.44, 0.4, 0.44], show: ['1H_Axe', 'Barbarian_Round_Shield', 'Barbarian_Cape'], melee: '1H_Melee_Attack_Chop', ranged: 'Throw', goblin: true },
+};
+
+const ACCESSORY_PARENTS = new Set(['handslot.l', 'handslot.r', 'head', 'chest']);
+
+export class AssetLibrary {
+  private pieces = new Map<string, THREE.Object3D>();
+  private chars = new Map<string, GLTF>();
+  clips: THREE.AnimationClip[] = [];
+  private goblinTextures = new Map<THREE.Texture, THREE.Texture>();
+
+  async load(onProgress?: (done: number, total: number) => void) {
+    const loader = new GLTFLoader();
+    const jobs: [string, (g: GLTF) => void][] = [
+      ['characters/animations.glb', (g) => { this.clips = g.animations; }],
+      ...CHARACTER_FILES.map((f) => [`characters/${f}.glb`, (g: GLTF) => this.chars.set(f, g)] as [string, (g: GLTF) => void]),
+      ...DUNGEON_PIECES.map((p) => [`dungeon/${p}.glb`, (g: GLTF) => this.pieces.set(p, g.scene)] as [string, (g: GLTF) => void]),
+    ];
+    let done = 0;
+    await Promise.all(jobs.map(async ([url, use]) => {
+      const g = await loader.loadAsync(BASE + url);
+      g.scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      use(g);
+      onProgress?.(++done, jobs.length);
+    }));
+  }
+
+  /** A fresh copy of a dungeon piece (geometry and materials are shared). */
+  piece(name: Piece): THREE.Object3D { return this.pieces.get(name)!.clone(true); }
+
+  /** Build an animated character for an archetype. */
+  character(archetype: Archetype): Character {
+    const spec = MODEL_SPECS[archetype];
+    const src = this.chars.get(spec.file)!;
+    const model = cloneSkinned(src.scene) as THREE.Group;
+    const materials: THREE.MeshStandardMaterial[] = [];
+    const accessories = new Map<string, THREE.Object3D>();
+    model.traverse((o) => {
+      if (o.parent && ACCESSORY_PARENTS.has(o.parent.name) && (o as THREE.Mesh).isMesh) accessories.set(o.name, o);
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) {
+        // own materials per character so it can flash / fade independently
+        const m = (mesh.material as THREE.MeshStandardMaterial).clone();
+        if (spec.goblin && m.map) m.map = this.goblinTexture(m.map);
+        m.roughness = 0.85; m.metalness = Math.min(m.metalness, 0.2);
+        mesh.material = m;
+        materials.push(m);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        mesh.frustumCulled = false;
+      }
+    });
+    for (const [name, o] of accessories) o.visible = spec.show.includes(name);
+    if (spec.goblin) addGoblinEars(model, materials);
+    model.scale.set(...spec.scale);
+    return new Character(model, this.clips, spec, accessories, materials);
+  }
+
+  /** Re-tint the skin tones of a KayKit gradient atlas to goblin green. */
+  private goblinTexture(tex: THREE.Texture): THREE.Texture {
+    const cached = this.goblinTextures.get(tex);
+    if (cached) return cached;
+    const img = tex.image as HTMLImageElement | ImageBitmap;
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d')!; g.drawImage(img, 0, 0);
+    const data = g.getImageData(0, 0, c.width, c.height);
+    const d = data.data, hsl = { h: 0, s: 0, l: 0 }, col = new THREE.Color();
+    const write = (i: number) => { const o = col.getStyle(THREE.SRGBColorSpace).match(/\d+/g)!.map(Number); d[i] = o[0]; d[i + 1] = o[1]; d[i + 2] = o[2]; };
+    for (let i = 0; i < d.length; i += 4) {
+      col.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, THREE.SRGBColorSpace);
+      col.getHSL(hsl, THREE.SRGBColorSpace);
+      // KayKit skin: warm, fairly light, moderately saturated
+      if (hsl.h > 0.03 && hsl.h < 0.12 && hsl.s > 0.2 && hsl.l > 0.55 && hsl.l < 0.95) {
+        // keep the shading gradient: lighter peach → lighter green
+        col.setHSL(0.25 + (hsl.h - 0.07) * 0.5, 0.55, 0.22 + (hsl.l - 0.55) * 0.9, THREE.SRGBColorSpace);
+        write(i);
+      } else if (hsl.h < 0.045 && hsl.s > 0.3 && hsl.l > 0.22 && hsl.l < 0.6) {
+        // red hair → a dark, scruffy goblin mop
+        col.setHSL(0.08, 0.3, hsl.l * 0.4, THREE.SRGBColorSpace);
+        write(i);
+      }
+    }
+    g.putImageData(data, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.flipY = tex.flipY; t.colorSpace = tex.colorSpace; t.wrapS = tex.wrapS; t.wrapT = tex.wrapT;
+    t.magFilter = tex.magFilter; t.minFilter = tex.minFilter; t.channel = tex.channel;
+    this.goblinTextures.set(tex, t);
+    return t;
+  }
+}
+
+/**
+ * Long pointed goblin ears, parented to the head bone so they follow the
+ * animation. Placed in model space and converted into the bone's frame (the
+ * bone's own axes don't line up with the model's).
+ */
+function addGoblinEars(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[]) {
+  const head = model.getObjectByName('head');
+  if (!head) return;
+  model.updateMatrixWorld(true);
+  const skin = new THREE.MeshStandardMaterial({ color: 0x6f9a38, roughness: 0.85 });
+  materials.push(skin);
+  const headPos = head.getWorldPosition(new THREE.Vector3());
+  const headQuat = head.getWorldQuaternion(new THREE.Quaternion()).invert();
+  for (const side of [-1, 1]) {
+    const geo = new THREE.ConeGeometry(0.13, 0.75, 6);
+    geo.translate(0, 0.375, 0); // pivot at the base
+    const ear = new THREE.Mesh(geo, skin);
+    ear.castShadow = true;
+    const at = headPos.clone().add(new THREE.Vector3(side * 0.42, 0.55, -0.05));
+    const dir = new THREE.Vector3(side, 0.32, -0.25).normalize();
+    ear.position.copy(head.worldToLocal(at));
+    ear.quaternion.copy(headQuat).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+    ear.scale.set(1, 1, 0.45);
+    head.add(ear);
+  }
+}
+
+/** An animated KayKit character: mixer, clip lookup, and weapon swaps. */
+export class Character {
+  readonly mixer: THREE.AnimationMixer;
+  private actions = new Map<string, THREE.AnimationAction>();
+  private current?: THREE.AnimationAction;
+  private base = 'Idle';
+
+  constructor(
+    readonly model: THREE.Group,
+    clips: THREE.AnimationClip[],
+    readonly spec: ModelSpec,
+    private accessories: Map<string, THREE.Object3D>,
+    readonly materials: THREE.MeshStandardMaterial[],
+  ) {
+    this.mixer = new THREE.AnimationMixer(model);
+    for (const c of clips) this.actions.set(c.name, this.mixer.clipAction(c));
+    this.loop('Idle', 0);
+    // desynchronise idles so a group doesn't breathe in unison
+    this.mixer.update(Math.random() * 2);
+  }
+
+  has(name: string) { return this.actions.has(name); }
+
+  /** Switch to a looping animation (Idle, Running_A …). */
+  loop(name: string, fade = 0.2) {
+    const a = this.actions.get(name);
+    if (!a || a === this.current) return;
+    a.reset(); a.setLoop(THREE.LoopRepeat, Infinity); a.clampWhenFinished = false; a.enabled = true; a.setEffectiveWeight(1); a.setEffectiveTimeScale(1);
+    if (this.current && fade > 0) a.crossFadeFrom(this.current, fade, false); else this.current?.stop();
+    a.play();
+    this.current = a;
+  }
+
+  /** Set the animation to return to after one-shots. */
+  setBase(name: string, fade = 0.25) { this.base = name; this.loop(name, fade); }
+
+  /**
+   * Play a one-shot. Resolves `impact` at `impactAt` (fraction of the clip) and
+   * `done` at the end. With `hold`, the last frame is kept (death, lying down).
+   */
+  once(name: string, opts: { impactAt?: number; hold?: boolean; speed?: number; fade?: number } = {}) {
+    const a = this.actions.get(name);
+    if (!a) return { impact: Promise.resolve(), done: Promise.resolve(), duration: 0 };
+    const speed = opts.speed ?? 1;
+    a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.enabled = true; a.setEffectiveTimeScale(speed); a.setEffectiveWeight(1);
+    if (this.current && this.current !== a) a.crossFadeFrom(this.current, opts.fade ?? 0.12, false); else this.current?.stop();
+    a.play();
+    this.current = a;
+    const duration = a.getClip().duration / speed;
+    const elapsed = { t: 0 };
+    const tick = (resolveAt: number) => new Promise<void>((res) => {
+      const check = () => { if (elapsed.t >= resolveAt) res(); else requestAnimationFrame(check); };
+      check();
+    });
+    this.pending.push({ elapsed, a });
+    const impact = tick(duration * (opts.impactAt ?? 0.45));
+    const done = tick(duration * 0.98).then(() => { if (!opts.hold && this.current === a) this.loop(this.base, 0.2); });
+    return { impact, done, duration };
+  }
+
+  private pending: { elapsed: { t: number }; a: THREE.AnimationAction }[] = [];
+
+  update(dt: number) {
+    this.mixer.update(dt);
+    for (const p of this.pending) p.elapsed.t += dt;
+    this.pending = this.pending.filter((p) => p.elapsed.t < 30);
+  }
+
+  /** Show the ranged weapon instead of melee weapons while shooting. */
+  showRanged(on: boolean) {
+    const prop = this.spec.rangedProp;
+    if (!prop) return;
+    for (const [name, o] of this.accessories) {
+      if (name === prop) o.visible = on || this.spec.show.includes(name);
+      else if (this.spec.show.includes(name) && (name.includes('Knife') || name.includes('Sword') || name.includes('Axe'))) o.visible = !on;
+    }
+  }
+}

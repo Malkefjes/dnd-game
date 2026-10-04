@@ -49,9 +49,15 @@ export class GameController {
   private round = 1;
   private keys = new Set<string>();
 
-  constructor(container: HTMLElement, rows: string[], combat: Combat, private restart: () => void) {
+  /** Load the assets, build the scene and HUD. */
+  static async create(container: HTMLElement, rows: string[], combat: Combat, restart: () => void, onProgress?: (done: number, total: number) => void) {
+    const r = await PixelRenderer.create(container, rows, onProgress);
+    return new GameController(r, combat, restart);
+  }
+
+  private constructor(r: PixelRenderer, combat: Combat, private restart: () => void) {
     this.combat = combat;
-    this.r = new PixelRenderer(container, rows);
+    this.r = r;
     this.ov = new Overlays(this.r);
     this.ai = new TacticalAI(combat);
     for (const c of combat.creatures) {
@@ -504,20 +510,24 @@ export class GameController {
       case 'move': {
         const v = this.vm.get(e.id)!;
         const hiddenEnemy = this.combat.get(e.id).side === 'enemy' && v.conds.has('hidden');
+        const ch = r.figures.get(e.id)!.character;
+        if (!hiddenEnemy) ch.loop('Running_A', 0.15);
         for (let i = 1; i < e.path.length; i++) {
           const a = e.path[i - 1], b = e.path[i];
           const fig = r.figures.get(e.id)!.group;
           const y0 = r.floorY(a.x, a.y), y1 = r.floorY(b.x, b.y);
           r.face(e.id, b.x, b.y);
           const climb = Math.abs(y1 - y0) > 0.4;
-          await r.tween(hiddenEnemy ? 0.05 : climb ? 0.3 : 0.17, (k) => {
+          const diag = a.x !== b.x && a.y !== b.y;
+          await r.tween(hiddenEnemy ? 0.05 : climb ? 0.36 : diag ? 0.3 : 0.24, (k) => {
             fig.position.x = a.x + (b.x - a.x) * k;
             fig.position.z = a.y + (b.y - a.y) * k;
-            fig.position.y = y0 + (y1 - y0) * k + Math.sin(Math.PI * k) * (climb ? 0.35 : 0.07);
+            fig.position.y = y0 + (y1 - y0) * k + (climb ? Math.sin(Math.PI * k) * 0.3 : 0);
           });
           v.pos = { ...b };
           if (!hiddenEnemy) r.lookAt(b.x, b.y);
         }
+        ch.loop('Idle', 0.2);
         return;
       }
       case 'attack': {
@@ -528,11 +538,21 @@ export class GameController {
         const roll = this.head(e.attacker, 0.45);
         const modeTxt = e.mode === 'advantage' ? ' ▲' : e.mode === 'disadvantage' ? ' ▼' : '';
         this.hud.float(roll.x, roll.y, `${e.opportunity ? 'Opportunity! ' : ''}d20 ${e.natural} → ${e.total}${modeTxt}`, 'roll');
+        const ch = r.figures.get(e.attacker)!.character;
+        const thrown = !!atk.consumes && !atk.consumes.includes('arrow');
+        if (atk.kind === 'ranged' && !thrown) ch.showRanged(true);
+        const offhand = atk.id === 'dagger' && this.combat.get(e.attacker).attacks.some((x) => x.id === 'shortsword') && !!ch.spec.offhand;
+        const anim = atk.kind === 'melee' ? (offhand ? ch.spec.offhand! : ch.spec.melee) : thrown ? 'Throw' : ch.spec.ranged;
+        const play = ch.once(anim, { impactAt: atk.kind === 'melee' ? 0.42 : 0.35, speed: 1.15 });
+        await play.impact;
         if (atk.kind === 'ranged') await this.projectile(e.attacker, e.target, atk.id);
-        else await this.lunge(e.attacker, tv.pos);
+        play.done.then(() => ch.showRanged(false));
         const hp = this.head(e.target);
-        if (!e.hit) { this.hud.float(hp.x, hp.y, 'Miss', 'miss'); await this.dodge(e.target, e.attacker); }
-        else if (e.crit) this.hud.float(hp.x, hp.y - 26, 'Critical!', 'crit');
+        if (!e.hit) {
+          this.hud.float(hp.x, hp.y, 'Miss', 'miss');
+          const tf = r.figures.get(e.target)!;
+          if (!tf.down) { const dodge = tf.character.once(Math.random() < 0.5 ? 'Dodge_Left' : 'Block', { speed: 1.4 }); await Promise.race([dodge.done, r.wait(0.45)]); }
+        } else if (e.crit) this.hud.float(hp.x, hp.y - 26, 'Critical!', 'crit');
         return;
       }
       case 'damage': {
@@ -541,8 +561,10 @@ export class GameController {
         r.flash(e.target);
         const p = this.head(e.target);
         this.hud.float(p.x, p.y, `−${e.amount}`, 'dmg');
-        await this.shake(e.target);
+        const tf = r.figures.get(e.target)!;
+        if (!tf.down && e.hp > 0) tf.character.once(Math.random() < 0.5 ? 'Hit_A' : 'Hit_B', { speed: 1.2 });
         this.refreshHud();
+        await r.wait(0.3);
         return;
       }
       case 'heal': {
@@ -560,7 +582,7 @@ export class GameController {
           this.r.setOpacity(e.target, e.added ? (side === 'party' ? 0.45 : 0) : 1);
           if (!e.added) { const p = this.head(e.target); this.hud.float(p.x, p.y, 'Spotted!', 'info'); }
         }
-        if (e.condition === 'prone' || e.condition === 'unconscious') await this.setLying(e.target, v.conds.has('prone') || v.conds.has('unconscious'));
+        if (e.condition === 'prone' || e.condition === 'unconscious') await this.setLying(e.target, v.conds.has('prone') || v.conds.has('unconscious'), v.conds.has('unconscious') ? 'Death_B' : 'Lie_Down');
         if (e.added && (e.condition === 'sapped' || e.condition === 'slowed')) { const p = this.head(e.target, 0.1); this.hud.float(p.x, p.y + 18, CONDITION_NAME[e.condition], 'info'); }
         this.refreshHud();
         return;
@@ -568,7 +590,7 @@ export class GameController {
       case 'down': { const p = this.head(e.id); this.hud.float(p.x, p.y - 20, 'Down!', 'crit'); await r.wait(0.3); return; }
       case 'death': {
         const v = this.vm.get(e.id)!; v.dead = true; v.conds.clear();
-        await this.setLying(e.id, true);
+        await this.setLying(e.id, true, 'Death_A');
         const f = r.figures.get(e.id)!;
         f.ring.visible = false;
         f.materials.forEach((m) => m.color.multiplyScalar(0.45));
@@ -595,6 +617,13 @@ export class GameController {
         this.hud.float(p.x, p.y, `${name} ${e.total}${e.dc ? ` vs ${e.dc} ${e.success ? '✓' : '✗'}` : ''}`, 'roll');
         await r.wait(0.45); return;
       }
+      case 'action': {
+        const ch = r.figures.get(e.id)!.character;
+        if (e.target && e.target !== e.id) { const tv = this.vm.get(e.target)!; r.face(e.id, tv.pos.x, tv.pos.y); }
+        const anim = { shove: 'Unarmed_Melee_Attack_Punch_A', potion: 'Use_Item', secondWind: 'Use_Item', stabilize: 'Interact', dodge: 'Block', search: 'Interact', hide: '', dash: '', disengage: '' }[e.action];
+        if (anim) { const play = ch.once(anim, { impactAt: 0.5, speed: 1.2 }); await play.impact; }
+        return;
+      }
       case 'deathSave': {
         const p = this.head(e.target, 0.2);
         this.hud.float(p.x, p.y, `Death save: ${e.natural}  (${e.success}✓ ${e.fail}✗)`, e.natural >= 10 ? 'roll' : 'dmg');
@@ -610,35 +639,13 @@ export class GameController {
     return this.r.tween(dur, (k) => { const s = k * k * (3 - 2 * k); g.position.set(from.x + (to.x - from.x) * s, y0 + (y1 - y0) * s, from.y + (to.y - from.y) * s); });
   }
 
-  private async lunge(id: string, toward: Pos) {
-    const g = this.r.figures.get(id)!.group;
-    const start = g.position.clone();
-    const dir = new THREE.Vector3(toward.x - start.x, 0, toward.y - start.z).normalize().multiplyScalar(0.32);
-    await this.r.tween(0.1, (k) => g.position.copy(start).addScaledVector(dir, k));
-    await this.r.tween(0.16, (k) => g.position.copy(start).addScaledVector(dir, 1 - k));
-  }
-
-  private async dodge(id: string, from: string) {
-    const g = this.r.figures.get(id)!.group, a = this.r.figures.get(from)!.group;
-    const start = g.position.clone();
-    const away = start.clone().sub(a.position).setY(0).normalize();
-    const side = new THREE.Vector3(-away.z, 0, away.x).multiplyScalar(0.14);
-    await this.r.tween(0.18, (k) => g.position.copy(start).addScaledVector(side, Math.sin(Math.PI * k)));
-  }
-
-  private async shake(id: string) {
-    const g = this.r.figures.get(id)!.group;
-    const start = g.position.clone();
-    await this.r.tween(0.2, (k) => { g.position.x = start.x + Math.sin(k * 40) * 0.05 * (1 - k); });
-    g.position.copy(start);
-  }
-
-  private async setLying(id: string, lying: boolean) {
+  /** Knock down (Lie_Down / Death_B / Death_A, held) or get back up (Lie_StandUp). */
+  private async setLying(id: string, lying: boolean, anim = 'Death_B') {
     const f = this.r.figures.get(id)!;
     if (f.down === lying) return;
     f.down = lying;
-    const from = f.fig.rotation.z, to = lying ? Math.PI / 2 * 0.92 : 0;
-    await this.r.tween(0.3, (k) => { f.fig.rotation.z = from + (to - from) * k; f.fig.position.y = 0.06 + (lying ? k : 1 - k) * 0.05; });
+    if (lying) { const p = f.character.once(anim, { hold: true, speed: 1.1 }); await Promise.race([p.done, this.r.wait(0.9)]); }
+    else { const p = f.character.once('Lie_StandUp', { speed: 1.3 }); await Promise.race([p.done, this.r.wait(0.9)]); }
   }
 
   private async projectile(from: string, to: string, kind: string) {
@@ -662,6 +669,7 @@ export class GameController {
   // ------------------------------------------------------------ end
 
   private showEnd(winner: 'party' | 'enemy') {
+    for (const c of this.combat.creatures) if (c.side === winner && this.combat.isConscious(c)) this.r.figures.get(c.id)!.character.once('Cheer', { hold: true });
     const party = this.combat.creatures.filter((c) => c.side === 'party');
     const standing = party.filter((c) => this.combat.isConscious(c)).map((c) => c.name);
     const rounds = this.round;

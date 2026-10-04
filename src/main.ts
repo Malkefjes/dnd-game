@@ -3,9 +3,15 @@ import { GOBLIN_DEN, goblinDen } from './game/encounters';
 
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed')) || Math.floor(Math.random() * 1e9);
-const game = new GameController(document.getElementById('app')!, GOBLIN_DEN, goblinDen(seed), () => {
+// loading screen while the 3D assets stream in
+const loading = document.createElement('div');
+loading.style.cssText = 'position:fixed;inset:0;display:grid;place-items:center;background:#050407;color:#e8c26a;font:600 18px Cinzel,serif;letter-spacing:.12em;z-index:20';
+loading.innerHTML = '<div style="text-align:center">THE GOBLIN DEN<div style="margin-top:14px;width:240px;height:4px;background:#2a221b;border-radius:2px;overflow:hidden"><div id="lbar" style="height:100%;width:0;background:#e8c26a;transition:width .2s"></div></div></div>';
+document.body.appendChild(loading);
+const game = await GameController.create(document.getElementById('app')!, GOBLIN_DEN, goblinDen(seed), () => {
   const url = new URL(location.href); url.searchParams.delete('seed'); url.searchParams.set('play', '1'); location.href = url.toString();
-});
+}, (done, total) => { (document.getElementById('lbar') as HTMLElement).style.width = `${(done / total) * 100}%`; });
+loading.remove();
 (window as unknown as { game: GameController }).game = game;
 
 const intro = `

@@ -23,6 +23,8 @@ export type GameEvent =
   | { type: 'down'; id: string }
   | { type: 'death'; id: string }
   | { type: 'resource'; id: string; resource: string; left: number }
+  /** A non-attack action was taken (for flavour animation). */
+  | { type: 'action'; id: string; action: 'shove' | 'potion' | 'secondWind' | 'hide' | 'dodge' | 'stabilize' | 'dash' | 'disengage' | 'search'; target?: string }
   | { type: 'combatEnd'; winner: 'party' | 'enemy' };
 
 // ---------------------------------------------------------------- commands
@@ -308,7 +310,7 @@ export class Combat {
       case 'dash': this.spend(actor, cmd.via, 'Dash'); actor.turn.movement += this.speedOf(actor); actor.turn.dashed++; this.log(`${actor.name} Dashes.`); break;
       case 'disengage': this.spend(actor, cmd.via, 'Disengage'); this.addCondition(actor, { id: 'disengaged', expires: { creature: actor.id, when: 'end', turn: actor.turnsStarted } }); this.log(`${actor.name} Disengages.`); break;
       case 'hide': this.doHide(actor, cmd.via); break;
-      case 'dodge': this.spend(actor, 'action', 'Dodge'); this.addCondition(actor, { id: 'dodging', expires: { creature: actor.id, when: 'start', turn: actor.turnsStarted + 1 } }); this.log(`${actor.name} takes the Dodge action.`); break;
+      case 'dodge': this.spend(actor, 'action', 'Dodge'); this.addCondition(actor, { id: 'dodging', expires: { creature: actor.id, when: 'start', turn: actor.turnsStarted + 1 } }); this.emit({ type: 'action', id: actor.id, action: 'dodge' }); this.log(`${actor.name} takes the Dodge action.`); break;
       case 'search': this.doSearch(actor); break;
       case 'shove': this.doShove(actor, this.get(cmd.target), cmd.effect); break;
       case 'secondWind': this.doSecondWind(actor); break;
@@ -692,6 +694,7 @@ export class Combat {
     const seen = this.hideBlockers(c);
     if (seen.length) throw new RuleError(`${c.name} can't hide: ${seen.map((s) => s.name).join(', ')} can see them`);
     this.spend(c, via, 'Hide');
+    this.emit({ type: 'action', id: c.id, action: 'hide' });
     const total = this.skillCheck(c, 'stealth', 15);
     if (total >= 15) {
       this.addCondition(c, { id: 'hidden', value: total });
@@ -710,6 +713,7 @@ export class Combat {
 
   private doSearch(c: Creature) {
     this.spend(c, 'action', 'Search');
+    this.emit({ type: 'action', id: c.id, action: 'search' });
     const total = this.skillCheck(c, 'perception');
     let found = 0;
     for (const e of this.enemiesOf(c)) {
@@ -730,6 +734,7 @@ export class Combat {
     c.turn.attacksLeft--;
     const dc = 8 + this.modOf(c, 'str') + c.pb;
     const ability: Ability = this.saveMod(target, 'str') >= this.saveMod(target, 'dex') ? 'str' : 'dex';
+    this.emit({ type: 'action', id: c.id, action: 'shove', target: target.id });
     this.log(`${c.name} tries to shove ${target.name}${effect === 'prone' ? ' to the ground' : ''}.`);
     if (this.cond(c, 'hidden')) this.removeCondition(c, 'hidden');
     if (this.savingThrow(target, ability, dc)) { this.log(`${target.name} holds firm.`); return; }
@@ -748,6 +753,7 @@ export class Combat {
     c.resourcesLeft.secondWind--;
     this.emit({ type: 'resource', id: c.id, resource: 'secondWind', left: c.resourcesLeft.secondWind });
     const r = rollDice(this.rng, { terms: [{ count: 1, sides: 10 }], bonus: c.level ?? 1 });
+    this.emit({ type: 'action', id: c.id, action: 'secondWind' });
     this.log(`${c.name} uses Second Wind.`);
     this.heal(c, r.total);
   }
@@ -768,6 +774,7 @@ export class Combat {
     if (!this.isAlive(target)) throw new RuleError(`${target.name} is beyond saving`);
     this.useBonus(c, 'potion');
     c.inv.potionOfHealing--;
+    this.emit({ type: 'action', id: c.id, action: 'potion', target: target.id });
     this.log(target.id === c.id ? `${c.name} drinks a Potion of Healing.` : `${c.name} pours a Potion of Healing down ${target.name}'s throat.`);
     this.heal(target, rollDice(this.rng, POTION).total);
   }
@@ -777,6 +784,7 @@ export class Combat {
     if (distanceFt(c.pos, target.pos) > 5) throw new RuleError(`${target.name} is too far away`);
     if (target.hp > 0 || !this.isAlive(target) || this.cond(target, 'stable')) throw new RuleError(`${target.name} doesn't need first aid`);
     this.spend(c, 'action', 'Help');
+    this.emit({ type: 'action', id: c.id, action: 'stabilize', target: target.id });
     const total = this.skillCheck(c, 'medicine', 10);
     if (total >= 10) { this.addCondition(target, { id: 'stable' }); target.deathSaves = { success: 0, fail: 0 }; this.log(`${c.name} stabilises ${target.name}.`, 'good'); }
     else this.log(`${c.name} fails to stabilise ${target.name} (Medicine ${total}).`, 'bad');

@@ -22,10 +22,28 @@ and **Nyx** (Halfling Rogue 2) against a goblin war band in their den.
 
 ### How it looks the way it does
 
-The dungeon and figures are real 3D (Three.js), lit by flickering, shadow-casting torches. The scene is rendered
-into a 1/3-resolution HDR target, then a single post pass applies filmic tone mapping, a limited palette with
-ordered dithering and depth-based outlines, and the result is upscaled with hard pixels. So it reads as pixel
-art, but the lighting is fully dynamic. The HUD is crisp DOM on top.
+The dungeon and characters are real 3D: low-poly, rigged and animated models from **KayKit** (CC0, see
+below). The goblins are KayKit rigs with the skin re-tinted green and pointed ears added on the head bone. Everything is lit
+by flickering, shadow-casting torches. Each frame is rendered at 1/3 resolution in HDR, plus a normals pass. One
+post-process pass then applies:
+
+- filmic tone mapping
+- banded light falloff
+- cooler shadows
+- silhouette outlines from depth
+- highlights on light-facing creases from normals
+- a limited palette with ordered dithering
+
+Characters are snapped to whole pixels so they don't shimmer while moving. The result is upscaled with hard pixels, so
+it reads as pixel art while the lighting stays fully dynamic. The HUD is crisp DOM on top.
+
+### Assets
+
+`public/assets/` comes from the KayKit packs by Kay Lousberg
+([Adventurers](https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0),
+[Dungeon Remastered](https://github.com/KayKit-Game-Assets/KayKit-Dungeon-Remastered-1.0)), CC0 1.0.
+To re-import, clone those repos into a folder and run `node tools/import-assets.mjs <folder>`. It copies the pieces
+the game uses, keeps the shared animations in one file, and quantises the meshes (about 4 MB total).
 
 ### Controls
 
@@ -49,7 +67,7 @@ npx tsx tools/sim.ts 3    # play-by-play log of seed 3
 src/engine/   rules engine: dice (seeded), grid + cover, combat state machine, AI
 src/data/     2024 content: weapons, heroes, monsters
 src/game/     encounters + the game controller (input, turn flow, event animation)
-src/render/   pixel renderer, procedural models, ground overlays
+src/render/   pixel renderer, KayKit asset loading + characters, dungeon builder, overlays
 src/ui/       HUD (DOM)
 mockups/      the four visual-style mockups (Three.js / Canvas 2D)
 tests/        vitest suites
