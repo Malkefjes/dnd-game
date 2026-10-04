@@ -74,13 +74,13 @@ size on a real GPU (the owner checks on Pages).
 
 **The UI side**, in the painted-miniatures style:
 
-- [ ] Steps: Species → Class → Background → Abilities → Skills & options → Spells → Appearance & name → Review.
-- [ ] A live preview of the 3D model, turning, with the pixel filter applied. Appearance is a KayKit body, an
+- [x] Steps: Species → Class → Background → Abilities → Skills & options → Spells → Appearance & name → Review.
+- [x] A live preview of the 3D model, turning, with the pixel filter applied. Appearance is a KayKit body, an
       accessory set and skin / hair / armour tints (the same re-tint tech as the goblins); horns and a tail for
       tieflings.
-- [ ] A side panel with the resulting sheet (HP, AC, attacks, saves, spell DC), updating as you choose. Tooltips
+- [x] A side panel with the resulting sheet (HP, AC, attacks, saves, spell DC), updating as you choose. Tooltips
       quote what each choice does.
-- [ ] Companion editing: open any companion in the creator to swap them for a custom character.
+- [x] Companion editing: open any companion in the creator to swap them for a custom character.
 
 **Done when:** you can make a legal level 1 character of any species and background in one of the four classes, see
 them in 3D, and the sheet matches a hand check against the PHB.

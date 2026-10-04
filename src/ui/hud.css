@@ -13,6 +13,8 @@
   --ally: #6fb3ff; --enemy: #e5584f; --hp: #b8322c; --hp-bg: rgba(0,0,0,.6);
   --slot-bg: linear-gradient(#2a221b, #17120e); --slot-border: 1px solid #5c4829;
   --act: #4caf50; --bonus: #f0a030; --react: #b06be0;
+  /* hotbar button kinds */
+  --k-attack: #d9573f; --k-action: #c8b78f; --k-feature: #e8c26a; --k-item: #3fb59a; --k-cantrip: #5aa8ff; --k-spell: #b77cf0;
 }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #050407; color: var(--text); font-family: var(--font-body); user-select: none; }
 canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default; }
@@ -94,9 +96,6 @@ canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default
 .slots { display: flex; gap: 5px; }
 .slot { position: relative; width: 50px; height: 50px; display: grid; place-items: center; background: var(--slot-bg); border: var(--slot-border); border-radius: 6px; color: var(--text); cursor: pointer; transition: transform .08s; }
 .slot:hover { transform: translateY(-2px); border-color: var(--accent-dim); }
-.slot.cost-action { box-shadow: inset 0 -3px 0 var(--act); }
-.slot.cost-bonus { box-shadow: inset 0 -3px 0 var(--bonus); }
-.slot.cost-free { box-shadow: inset 0 -3px 0 #e8e8e8; }
 .slot.selected { outline: 2px solid var(--accent); outline-offset: 1px; background: linear-gradient(#3d3120, #1d160f); }
 .slot.disabled { opacity: .3; cursor: not-allowed; }
 .slot .uses { position: absolute; top: 1px; right: 3px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; background: rgba(0,0,0,.65); font-size: 11px; font-weight: 700; line-height: 15px; text-align: center; }
@@ -108,17 +107,21 @@ canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default
 .hotbar.waiting .slots, .hotbar.waiting .end-turn { opacity: .35; pointer-events: none; }
 .slots.spells .slot { width: 44px; height: 44px; background: linear-gradient(#251f2c, #141019); border-color: #4c3f63; }
 .slots.spells .slot.selected { background: linear-gradient(#3a2d4a, #1b1422); }
-/* labeled hotbar: the icon on top, its name in two short lines below */
-.hotbar.labeled .slot { width: 58px; height: 62px; grid-template-rows: 24px auto; row-gap: 2px; padding: 7px 2px 6px; place-items: start center; align-content: start; }
-.hotbar.labeled .slots.spells .slot { width: 58px; height: 60px; }
-.slot .name { font-size: 10.5px; line-height: 1.1; text-align: center; color: var(--text); letter-spacing: .01em;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
+/* hotbar buttons: names only; the bottom edge says what kind of thing it is, the corner dot what it costs */
+.slot { width: 66px; height: 50px; padding: 13px 4px 6px; }
+.slots.spells .slot { width: 66px; height: 50px; }
+.slot .name { font-size: 12px; line-height: 1.08; text-align: center; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .slot.disabled .name { color: var(--muted); }
-.hotbar.labeled .slot .key { top: 3px; left: 4px; font-size: 9.5px; }
-.label-toggle { align-self: stretch; width: 22px; margin-left: 2px; padding: 0; border: var(--slot-border); border-radius: 5px; background: var(--slot-bg);
-  font-family: var(--font-head); font-size: 10px; color: var(--muted); cursor: pointer; }
-.label-toggle:hover { color: var(--accent); border-color: var(--accent-dim); }
-.hotbar.labeled .label-toggle { color: var(--accent); }
+.slot.kind-attack { box-shadow: inset 0 -3px 0 var(--k-attack); }
+.slot.kind-action { box-shadow: inset 0 -3px 0 var(--k-action); }
+.slot.kind-feature { box-shadow: inset 0 -3px 0 var(--k-feature); }
+.slot.kind-item { box-shadow: inset 0 -3px 0 var(--k-item); }
+.slot.kind-cantrip { box-shadow: inset 0 -3px 0 var(--k-cantrip); }
+.slot.kind-spell { box-shadow: inset 0 -3px 0 var(--k-spell); }
+.slot .cost { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; border: 1px solid rgba(0,0,0,.6); }
+.slot .cost-action { background: var(--act); } .slot .cost-bonus { background: var(--bonus); } .slot .cost-reaction { background: var(--react); } .slot .cost-free { background: #e8e8e8; opacity: .5; }
+.slot .uses { top: 1px; right: 13px; min-width: 0; height: 12px; padding: 0 2px; background: none; font-size: 10.5px; line-height: 12px; color: var(--accent); }
+.slot .key { top: 3px; left: 4px; font-size: 9.5px; }
 .spell-pips { display: inline-flex; align-items: center; gap: 3px; margin-left: 12px; }
 .spell-pips .lvl { font-family: var(--font-head); font-size: 11px; color: #c9a8ff; margin: 0 2px 0 6px; }
 .spell-pips i { width: 9px; height: 9px; transform: rotate(45deg); border: 1px solid #8f6fd0; display: inline-block; opacity: .4; }
@@ -186,5 +189,4 @@ canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default
   .log { display: none; }
   .active-info { width: auto; } .active-info .atitle, .active-info .hp { display: none; }
 }
-.slot.cost-reaction { box-shadow: inset 0 -3px 0 var(--react); }
 .title-buttons { display: flex; justify-content: center; gap: 10px; }

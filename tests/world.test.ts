@@ -90,3 +90,19 @@ describe('the world', () => {
     expect(near).toBe(true);
   });
 });
+
+describe('heroes from the creator', () => {
+  it('a party of creator choices builds, saves and loads', async () => {
+    const { newChoices, complete } = await import('../src/data/build/defaults');
+    const { presetBuild } = await import('../src/world/world');
+    const { ABBEY } = await import('../src/data/maps/abbey');
+    const hero = complete({ ...newChoices('Vesper'), id: 'hero', species: 'tiefling', cls: 'paladin', background: 'acolyte' });
+    const w = World.newGame(ABBEY, { seed: 3, mapId: 'abbey-1', party: [{ choices: hero, level: 1 }, presetBuild('torvald', 1), presetBuild('maren', 1), presetBuild('elowen', 1)] });
+    expect(w.state.party.map((h) => h.id)).toEqual(['hero', 'torvald', 'maren', 'elowen']);
+    const back = World.load(ABBEY, w.serialize());
+    const def = back.heroDef(back.state.party[0]);
+    expect(def.description).toBe('Tiefling Paladin 1');
+    expect(def.look?.horns).toBe(true);
+    expect(def.resist).toEqual(['poison']);
+  });
+});

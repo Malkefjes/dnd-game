@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { Archetype } from './models';
+import type { Look, Tint } from '../engine/types';
 
 const BASE = `${import.meta.env.BASE_URL}assets/`;
 
@@ -38,6 +39,8 @@ interface ModelSpec {
   cast?: string;
   /** Re-tint the skin (goblin green 0.25, hobgoblin red-orange 0.03, zombie grey-green); `ears` adds goblin ears. */
   skin?: { hue: number; sat: number; light?: number; ears?: boolean };
+  /** A hero's look: skin and hair tones (lightness relative to the original), and extra features. */
+  tone?: { skin: Tint | null; hair: Tint | null; ears: Look['ears']; horns: boolean; tail: boolean };
   /** Separate prop models held in the hands. */
   props?: { file: PropFile; hand: 'r' | 'l' }[];
   /** Walk cycle (default Running_A) and idle (default Idle). */
@@ -45,6 +48,54 @@ interface ModelSpec {
   idle?: string;
   /** A hand-made prop (the cleric's mace). */
   prop?: 'mace';
+}
+
+const HATS: Record<Look['body'], string | undefined> = { Knight: 'Knight_Helmet', Barbarian: 'Barbarian_Hat', Mage: 'Mage_Hat', Rogue: undefined, Rogue_Hooded: undefined };
+const CAPES: Record<Look['body'], string> = { Knight: 'Knight_Cape', Barbarian: 'Barbarian_Cape', Mage: 'Mage_Cape', Rogue: 'Rogue_Cape', Rogue_Hooded: 'Rogue_Cape' };
+
+/**
+ * A hero's model spec from their look. Each KayKit body has its own weapons; where a body lacks one, the
+ * skeleton pack's props stand in (a blade, an axe, a staff, a shield), and the mace is built by hand.
+ */
+export function specForLook(look: Look): ModelSpec {
+  const b = look.body, g = look.gear;
+  const show: string[] = [];
+  const props: NonNullable<ModelSpec['props']> = [];
+  let prop: ModelSpec['prop'];
+  if (look.hat && HATS[b]) show.push(HATS[b]!);
+  if (look.cape) show.push(CAPES[b]);
+  const rogue = b === 'Rogue' || b === 'Rogue_Hooded';
+  const two = g.main === 'greatblade' || g.main === 'greataxe' || g.main === 'staff';
+  switch (g.main) {
+    case 'mace': prop = 'mace'; break;
+    case 'staff': if (b === 'Mage') show.push('2H_Staff'); else props.push({ file: 'Skeleton_Staff', hand: 'r' }); break;
+    case 'blade': case 'dagger':
+      if (b === 'Knight') show.push('1H_Sword'); else if (b === 'Barbarian') show.push('1H_Axe'); else if (rogue) show.push('Knife'); else props.push({ file: 'Skeleton_Blade', hand: 'r' });
+      break;
+    case 'axe':
+      if (b === 'Barbarian') show.push('1H_Axe'); else props.push({ file: 'Skeleton_Axe', hand: 'r' });
+      break;
+    case 'greatblade': case 'greataxe':
+      if (b === 'Knight') show.push('2H_Sword'); else if (b === 'Barbarian') show.push('2H_Axe'); else props.push({ file: g.main === 'greataxe' ? 'Skeleton_Axe' : 'Skeleton_Blade', hand: 'r' });
+      break;
+    default: if (b === 'Mage') show.push('1H_Wand'); break;
+  }
+  if (g.offhand === 'shield') {
+    if (b === 'Knight') show.push(g.holy ? 'Badge_Shield' : 'Round_Shield');
+    else if (b === 'Barbarian') show.push('Barbarian_Round_Shield');
+    else props.push({ file: 'Skeleton_Shield_Small_A', hand: 'l' });
+  } else if (g.offhand === 'dagger') {
+    if (rogue) show.push('Knife_Offhand'); else if (b === 'Knight') show.push('1H_Sword_Offhand'); else if (b === 'Barbarian') show.push('1H_Axe_Offhand');
+  } else if (b === 'Mage' && !two) show.push('Spellbook');
+  const melee = g.main === 'dagger' ? '1H_Melee_Attack_Stab' : two ? '1H_Melee_Attack_Slice_Horizontal' : g.main === 'mace' ? '1H_Melee_Attack_Chop' : '1H_Melee_Attack_Slice_Diagonal';
+  return {
+    file: b, scale: look.scale, show, props, prop,
+    rangedProp: g.bow && rogue ? '2H_Crossbow' : undefined,
+    melee, offhand: g.offhand === 'dagger' ? 'Dualwield_Melee_Attack_Stab' : undefined,
+    ranged: g.bow ? (rogue ? '2H_Ranged_Shoot' : '1H_Ranged_Shoot') : 'Throw',
+    cast: g.main === 'staff' || b === 'Mage' ? 'Spellcast_Shoot' : 'Spellcast_Raise',
+    tone: { skin: look.skin, hair: look.hair, ears: look.ears, horns: look.horns, tail: look.tail },
+  };
 }
 
 export const MODEL_SPECS: Record<Archetype, ModelSpec> = {
@@ -105,9 +156,9 @@ export class AssetLibrary {
   /** The loaded original, for instancing (don't add it to the scene). */
   pieceSource(name: Piece): THREE.Object3D { return this.pieces.get(name)!; }
 
-  /** Build an animated character for an archetype. */
-  character(archetype: Archetype): Character {
-    const spec = MODEL_SPECS[archetype];
+  /** Build an animated character for an archetype, or from a hero's look. */
+  character(archetype: Archetype, look?: Look): Character {
+    const spec = look ? specForLook(look) : MODEL_SPECS[archetype];
     const src = this.chars.get(spec.file)!;
     const model = cloneSkinned(src.scene) as THREE.Group;
     const materials: THREE.MeshStandardMaterial[] = [];
@@ -119,6 +170,7 @@ export class AssetLibrary {
         // own materials per character so it can flash / fade independently
         const m = (mesh.material as THREE.MeshStandardMaterial).clone();
         if (spec.skin && m.map) m.map = this.skinTexture(m.map, spec.skin);
+        if (spec.tone && (spec.tone.skin || spec.tone.hair) && m.map) m.map = this.toneTexture(m.map, spec.tone.skin, spec.tone.hair);
         m.roughness = 0.85; m.metalness = Math.min(m.metalness, 0.2);
         mesh.material = m;
         materials.push(m);
@@ -129,6 +181,7 @@ export class AssetLibrary {
     // only accessories (hand / head / chest attachments) are toggled; body parts always show
     for (const [name, o] of accessories) o.visible = spec.show.includes(name);
     if (spec.skin?.ears) addGoblinEars(model, materials, spec.skin.hue);
+    if (spec.tone) addFeatures(model, materials, spec.tone);
     for (const p of spec.props ?? []) {
       const hand = model.getObjectByName(`handslot.${p.hand}`);
       const src = this.props.get(p.file);
@@ -146,6 +199,38 @@ export class AssetLibrary {
     if (spec.prop === 'mace') addMace(model, materials);
     model.scale.set(...spec.scale);
     return new Character(model, this.clips, spec, accessories, materials);
+  }
+
+  /**
+   * A hero's skin and hair: skin pixels move to the tint's hue and saturation with their lightness scaled, so
+   * the shading survives; the red hair of the atlas takes the hair tint the same way.
+   */
+  private toneTexture(tex: THREE.Texture, skin: Tint | null, hair: Tint | null): THREE.Texture {
+    if (!this.texIds.has(tex)) this.texIds.set(tex, this.texIds.size);
+    const key = `tone:${this.texIds.get(tex)}:${JSON.stringify(skin)}:${JSON.stringify(hair)}`;
+    const cached = this.goblinTextures.get(key);
+    if (cached) return cached;
+    const img = tex.image as HTMLImageElement | ImageBitmap;
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d')!; g.drawImage(img, 0, 0);
+    const data = g.getImageData(0, 0, c.width, c.height);
+    const d = data.data, hsl = { h: 0, s: 0, l: 0 }, col = new THREE.Color();
+    for (let i = 0; i < d.length; i += 4) {
+      col.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, THREE.SRGBColorSpace);
+      col.getHSL(hsl, THREE.SRGBColorSpace);
+      let t: Tint | null = null;
+      if (skin && hsl.h > 0.03 && hsl.h < 0.12 && hsl.s > 0.2 && hsl.l > 0.55 && hsl.l < 0.95) t = skin;
+      else if (hair && hsl.h < 0.045 && hsl.s > 0.3 && hsl.l > 0.22 && hsl.l < 0.6) t = hair;
+      if (!t) continue;
+      col.setHSL((t.hue + (hsl.h - 0.07) * 0.5 + 1) % 1, t.sat, Math.min(0.94, hsl.l * t.light), THREE.SRGBColorSpace);
+      const o = col.getStyle(THREE.SRGBColorSpace).match(/\d+/g)!.map(Number); d[i] = o[0]; d[i + 1] = o[1]; d[i + 2] = o[2];
+    }
+    g.putImageData(data, 0, 0);
+    const out = new THREE.CanvasTexture(c);
+    out.flipY = tex.flipY; out.colorSpace = tex.colorSpace; out.wrapS = tex.wrapS; out.wrapT = tex.wrapT;
+    out.magFilter = tex.magFilter; out.minFilter = tex.minFilter; out.channel = tex.channel;
+    this.goblinTextures.set(key, out);
+    return out;
   }
 
   /** Re-tint the skin tones of a KayKit gradient atlas (goblin green, hobgoblin red, zombie grey). */
@@ -208,6 +293,57 @@ function addGoblinEars(model: THREE.Object3D, materials: THREE.MeshStandardMater
     ear.quaternion.copy(headQuat).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
     ear.scale.set(1, 1, 0.45);
     head.add(ear);
+  }
+}
+
+/** The skin colour a tint gives a typical KayKit skin pixel (for ears and tails). */
+function skinColor(t: Tint | null): THREE.Color {
+  const base = new THREE.Color().setHSL(0.07, 0.5, 0.72, THREE.SRGBColorSpace);
+  if (!t) return base;
+  return new THREE.Color().setHSL(t.hue, t.sat, Math.min(0.94, 0.72 * t.light), THREE.SRGBColorSpace);
+}
+
+/** Pointed ears, horns and a tail, built from primitives on the head and hip bones. */
+function addFeatures(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[], tone: NonNullable<ModelSpec['tone']>) {
+  model.updateMatrixWorld(true);
+  const skin = new THREE.MeshStandardMaterial({ color: skinColor(tone.skin), roughness: 0.85 });
+  materials.push(skin);
+  const attach = (bone: THREE.Object3D, mesh: THREE.Mesh, at: THREE.Vector3, dir: THREE.Vector3) => {
+    const bonePos = bone.getWorldPosition(new THREE.Vector3());
+    const inv = bone.getWorldQuaternion(new THREE.Quaternion()).invert();
+    mesh.position.copy(bone.worldToLocal(bonePos.clone().add(at)));
+    mesh.quaternion.copy(inv).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+    mesh.castShadow = true;
+    bone.add(mesh);
+  };
+  const head = model.getObjectByName('head');
+  if (head && tone.ears === 'pointed') {
+    for (const side of [-1, 1]) {
+      const geo = new THREE.ConeGeometry(0.11, 0.42, 5); geo.translate(0, 0.21, 0);
+      const ear = new THREE.Mesh(geo, skin);
+      attach(head, ear, new THREE.Vector3(side * 0.43, 0.5, -0.02), new THREE.Vector3(side, 0.55, -0.35));
+      ear.scale.set(1, 1, 0.45);
+    }
+  }
+  if (head && tone.horns) {
+    const horn = new THREE.MeshStandardMaterial({ color: 0x2a2024, roughness: 0.6 });
+    materials.push(horn);
+    for (const side of [-1, 1]) {
+      // two segments curving up and back
+      const a = new THREE.ConeGeometry(0.1, 0.34, 6); a.translate(0, 0.17, 0);
+      const m = new THREE.Mesh(a, horn);
+      attach(head, m, new THREE.Vector3(side * 0.26, 0.95, 0.12), new THREE.Vector3(side * 0.35, 1, -0.55));
+    }
+  }
+  const hips = model.getObjectByName('hips');
+  if (hips && tone.tail) {
+    const geo = new THREE.CylinderGeometry(0.035, 0.07, 0.9, 6); geo.translate(0, 0.45, 0);
+    const tail = new THREE.Mesh(geo, skin);
+    attach(hips, tail, new THREE.Vector3(0, 0.1, -0.25), new THREE.Vector3(0, -0.55, -1));
+    const tipGeo = new THREE.ConeGeometry(0.09, 0.2, 4); tipGeo.translate(0, 0.1, 0);
+    const tip = new THREE.Mesh(tipGeo, skin);
+    tip.position.y = 0.9; tip.rotation.x = 0.6;
+    tail.add(tip);
   }
 }
 

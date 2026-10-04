@@ -199,6 +199,29 @@ export interface Spellcasting {
   spells: SpellDef[];
 }
 
+// ---------------------------------------------------------------- appearance (data for the renderer)
+
+/** A colour shift: hue 0–1, saturation 0–1, lightness as a multiplier of the original. */
+export interface Tint { hue: number; sat: number; light: number }
+/** KayKit bodies a hero can wear. */
+export type Body = 'Knight' | 'Rogue' | 'Rogue_Hooded' | 'Barbarian' | 'Mage';
+/** What a hero holds, from their starting kit. */
+export type GearKind = 'blade' | 'greatblade' | 'axe' | 'greataxe' | 'mace' | 'dagger' | 'staff' | 'none';
+export interface Look {
+  body: Body;
+  /** Skin and hair tints; null keeps the model's own colours. */
+  skin: Tint | null;
+  hair: Tint | null;
+  ears: 'none' | 'pointed' | 'long';
+  horns: boolean;
+  tail: boolean;
+  hat: boolean;
+  cape: boolean;
+  /** Model scale (width, height, depth). */
+  scale: [number, number, number];
+  gear: { main: GearKind; offhand: 'shield' | 'dagger' | 'none'; bow: boolean; holy: boolean };
+}
+
 export interface CreatureDef {
   id: string;
   name: string;
@@ -228,6 +251,8 @@ export interface CreatureDef {
   description?: string;
   /** Which 3D model the renderer uses. */
   model?: string;
+  /** A hero's appearance (overrides `model`'s default outfit). */
+  look?: Look;
   spellcasting?: Spellcasting;
   /** Creature type, for spells like Sleep (elves) or Hold Person (humanoids), and Turn Undead. */
   type?: string;

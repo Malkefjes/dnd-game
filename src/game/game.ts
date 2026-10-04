@@ -45,8 +45,10 @@ export class Game {
   /** Groups lying still until disturbed (their figures play dead). */
   private dormant = new Set<string>();
 
-  static async create(container: HTMLElement, world: World, hooks: GameHooks, onProgress?: (done: number, total: number) => void) {
-    const r = await PixelRenderer.create(container, world.map.rows, onProgress);
+  /** Start the game. A renderer that's already running (the character creator's) is reused for the first floor. */
+  static async create(container: HTMLElement, world: World, hooks: GameHooks, onProgress?: (done: number, total: number) => void, renderer?: PixelRenderer) {
+    let r = renderer;
+    if (r) { r.loadMap(world.map.rows); r.setZoom(4); } else r = await PixelRenderer.create(container, world.map.rows, onProgress);
     return new Game(r, world, hooks);
   }
 
@@ -81,7 +83,7 @@ export class Game {
     this.dormant.clear();
     for (const h of this.world.state.party) {
       const def = this.world.heroDef(h);
-      r.addFigure(h.id, def.model as Archetype, 'party', h.pos.x, h.pos.y, -Math.PI / 4);
+      r.addFigure(h.id, def.model as Archetype, 'party', h.pos.x, h.pos.y, -Math.PI / 4, def.look);
       vm.set(h.id, { name: def.name, side: 'party', hp: h.hp, maxHp: h.maxHp, pos: { ...h.pos }, conds: new Set(h.conditions.map((k) => k.id)), dead: h.dead });
       if (h.dead) { const f = r.figures.get(h.id)!; f.down = true; f.character.once('Death_A', { hold: true, speed: 50 }); f.ring.visible = false; }
     }
@@ -138,7 +140,6 @@ export class Game {
     addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || document.querySelector('.modal-back')) return;
       this.keys.add(e.key.toLowerCase());
-      if (e.key.toLowerCase() === 'l' && !e.ctrlKey && !e.metaKey) { this.hud.toggleLabels(); return; }
       if (this.view) { this.view.handleKey(e); return; }
       if (e.key === 'Tab') { e.preventDefault(); this.cycleSelected(e.shiftKey ? -1 : 1); }
     });

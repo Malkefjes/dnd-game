@@ -6,12 +6,22 @@ import { Combat, type CarriedState } from '../engine/combat';
 import { Rng } from '../engine/dice';
 import { Grid, posKey, samePos, type Pos } from '../engine/grid';
 import type { Condition, CreatureDef } from '../engine/types';
-import { PRESETS, type Level } from '../data/heroes';
+import { PRESETS, PRESET_CHOICES, type Level } from '../data/heroes';
+import { buildCharacter, type Choices } from '../data/build/builder';
 import { MONSTERS } from '../data/monsters';
 import { doorId, doorsOf, inRect, type GroupDef, type MapDef } from './map';
 
-/** How a hero is built. Phase 1 turns this into the character creator's choices. */
-export interface HeroBuild { preset: string; level: Level }
+/** How a hero is built: the character creator's choices, or (older saves, tools) a ready-made hero's id. */
+export interface HeroBuild { choices?: Choices; preset?: string; level: Level }
+
+/** The stat block a build makes. */
+export function buildDef(b: HeroBuild): CreatureDef {
+  if (b.choices) return buildCharacter(b.choices, b.level);
+  return PRESETS[b.preset!](b.level);
+}
+
+/** A ready-made hero's build, as choices (so the creator can edit it). */
+export const presetBuild = (id: string, level: Level): HeroBuild => ({ choices: structuredClone(PRESET_CHOICES[id]), level });
 
 export interface HeroState extends CarriedState {
   id: string;
@@ -62,7 +72,7 @@ export class World {
   static newGame(maps: Record<string, MapDef>, opts: { seed: number; mapId: string; party: HeroBuild[] }): World {
     const map = maps[opts.mapId];
     const party = opts.party.map((build, i): HeroState => {
-      const def = PRESETS[build.preset](build.level);
+      const def = buildDef(build);
       return {
         id: def.id, build, pos: { ...(map.start?.[i] ?? { x: 1, y: 1 }) }, dead: false, xp: 0,
         hp: def.maxHp, maxHp: def.maxHp, slotsLeft: [...(def.spellcasting?.slots ?? [])],
@@ -91,7 +101,7 @@ export class World {
     return (this.state.floors[id] ??= { defeated: [], open: [], read: [] });
   }
 
-  heroDef(h: HeroState): CreatureDef { return PRESETS[h.build.preset](h.build.level); }
+  heroDef(h: HeroState): CreatureDef { return buildDef(h.build); }
   living(): HeroState[] { return this.state.party.filter((h) => !h.dead); }
 
   /** Enemy groups still waiting on this floor. */

@@ -7,6 +7,7 @@ import { speciesById } from './species';
 import { backgroundById, MAGIC_INITIATE, ORIGIN_FEATS, type OriginFeatId } from './backgrounds';
 import { ALWAYS_PREPARED, CLASS_ACTIONS, CLASSES, classResources, FIGHTING_STYLES, SCHOLAR_SKILLS, type ClassId, type FightingStyle } from './classes';
 import { parseDice } from '../../engine/dice';
+import { lookFor, type LookChoice } from './look';
 
 export const MAX_LEVEL = 4;
 
@@ -57,6 +58,8 @@ export interface Choices {
   feats?: FeatChoice[];
   /** Level 4: Ability Score Improvement, or an origin feat. */
   level4?: { asi?: Partial<AbilityScores>; feat?: OriginFeatId; featChoice?: FeatChoice };
+  /** Appearance picks (everything else about the figure follows from species and kit). */
+  look?: LookChoice;
 }
 
 // ------------------------------------------------------------------ ability scores
@@ -283,7 +286,7 @@ export function buildCharacter(c: Choices, level: number): CreatureDef {
   return {
     id: c.id ?? c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     name: c.name, side: 'party', controller: 'player', size, pc: true, type: 'humanoid',
-    description: `${sp.name} ${cls.name} ${level}${subclass}`, model: cls.model,
+    description: `${sp.name} ${cls.name} ${level}${subclass}`, model: cls.model, look: lookFor(c.species, c.lineage, c.cls, kit, c.look),
     abilities, pb, level, maxHp, ac, speed,
     saveProfs: [...cls.saves],
     skills, attacks, attacksPerAction: 1,

@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { DungeonMap, LEVEL, rng, type Archetype } from './models';
 import { AssetLibrary, type Character } from './assets';
+import type { Look } from '../engine/types';
 import { buildKayKitDungeon } from './dungeon';
 
 const POST_VERT = /* glsl */ `precision highp float; in vec3 position; in vec2 uv; out vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
@@ -259,8 +260,9 @@ export class PixelRenderer {
 
   // ------------------------------------------------------------ figures
 
-  addFigure(id: string, archetype: Archetype, side: 'party' | 'enemy', x: number, y: number, facing: number): FigureView {
-    const character = this.lib.character(archetype);
+  /** Put a figure on the map. `lantern: false` skips the hero's lantern light (the creator's preview, which changes often). */
+  addFigure(id: string, archetype: Archetype, side: 'party' | 'enemy', x: number, y: number, facing: number, look?: Look, opts: { lantern?: boolean } = {}): FigureView {
+    const character = this.lib.character(archetype, look);
     const group = new THREE.Group();
     group.add(character.model);
     // team ring at the feet
@@ -268,7 +270,7 @@ export class PixelRenderer {
     ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03;
     group.add(ring); this.noNormals.push(ring);
     // heroes carry a faint lantern so they read clearly in the dark corners
-    if (side === 'party') { const lantern = new THREE.PointLight(0xffd9a0, 2.2, 3.2, 1.6); lantern.position.set(0.1, 1.0, 0.15); group.add(lantern); }
+    if (side === 'party' && opts.lantern !== false) { const lantern = new THREE.PointLight(0xffd9a0, 2.2, 3.2, 1.6); lantern.position.set(0.1, 1.0, 0.15); group.add(lantern); }
     group.position.set(x, this.map.floorY(x, y), y);
     group.rotation.y = Math.PI / 2 - facing; // KayKit models face +z
     group.traverse((o) => { o.userData.creatureId = id; });
@@ -395,7 +397,8 @@ export class PixelRenderer {
     if (Math.abs(ndc.x) > margin || Math.abs(ndc.y) > margin) this.lookAt(x, z);
   }
   pan(dx: number, dz: number) { this.focusGoal.x += dx; this.focusGoal.z += dz; this.clampFocus(); }
-  setZoom(z: number) { this.zoom = Math.min(8, Math.max(2.8, z)); this.updateCamera(); }
+  /** Zoom (half the view height in squares). `close` allows the creator's close-up. */
+  setZoom(z: number, close = false) { this.zoom = Math.min(8, Math.max(close ? 1.2 : 2.8, z)); this.updateCamera(); }
   private clampFocus() {
     this.focusGoal.x = Math.min(this.map.width, Math.max(-1, this.focusGoal.x));
     this.focusGoal.z = Math.min(this.map.height, Math.max(-1, this.focusGoal.z));
@@ -458,7 +461,10 @@ export class PixelRenderer {
   wait(s: number) { return this.tween(s, () => {}); }
   after(s: number, fn: () => void) { this.wait(s).then(fn); }
 
+  private started = false;
   start() {
+    if (this.started) return;
+    this.started = true;
     let last = performance.now();
     const frame = (now: number) => {
       // rAF timestamps can precede performance.now(): never let dt go negative

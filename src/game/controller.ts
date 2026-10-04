@@ -645,7 +645,7 @@ export class CombatView {
         sp.concentration ? 'Concentration' : '',
       ].filter(Boolean).join(' · ');
       out.push({
-        key: `spell:${sp.id}`, icon: sp.icon, label: sp.name, cost: sp.time === 'reaction' ? 'reaction' : sp.time === 'bonus' ? 'bonus' : 'action',
+        key: `spell:${sp.id}`, icon: sp.icon, label: sp.name, kind: sp.uses ? 'feature' : sp.level === 0 ? 'cantrip' : 'spell', cost: sp.time === 'reaction' ? 'reaction' : sp.time === 'bonus' ? 'bonus' : 'action',
         uses: sp.uses ? a.resourcesLeft[sp.uses] ?? 0 : undefined,
         enabled: why === null, selected: this.mode.kind === 'spell' && this.mode.spell === sp.id,
         tip: `<div class="tip-head"><span class="tname">${esc(sp.name)}</span><span class="tsub">${level}</span></div><div class="tip-row"><span>${esc(stats)}</span></div><div class="tip-note">${esc(sp.description)}</div>${why && why !== 'reaction' ? `<div class="tip-warn">${esc(why)}</div>` : ''}${sp.time === 'reaction' || sp.time === 'onHit' ? '<div class="tip-good">You will be asked when it can be used.</div>' : ''}`,
