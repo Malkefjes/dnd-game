@@ -5,7 +5,7 @@ A turn-based, single-player, isometric D&D combat game for the browser, built on
 
 **MVP:** a combat-focused dungeon crawl with a party of up to 4. You control every party member.
 
-**▶ Play it: https://malkefjes.github.io/dnd-game/** · [style mockups](https://malkefjes.github.io/dnd-game/mockups/)
+**▶ Play it: https://malkefjes.github.io/dnd-game/** · Working on it with Claude? Start with [`CLAUDE.md`](CLAUDE.md). · [style mockups](https://malkefjes.github.io/dnd-game/mockups/)
 
 ## Status: Milestone 1 (playable)
 
