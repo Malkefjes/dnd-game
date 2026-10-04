@@ -161,3 +161,6 @@ export function elowen(level: Level = 3): CreatureDef {
 }
 
 export function party(level: Level = 3): CreatureDef[] { return [torvald(level), nyx(level), maren(level), elowen(level)]; }
+
+/** The ready-made heroes by id (Phase 1 replaces these with characters from the creator). */
+export const PRESETS: Record<string, (level?: Level) => CreatureDef> = { torvald, nyx, maren, elowen };

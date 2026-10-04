@@ -1,7 +1,7 @@
 // Battle grid: terrain, movement cost and line of sight / cover.
 // One square = 5 feet. Diagonal steps cost the same as orthogonal ones.
 
-export type Terrain = 'floor' | 'wall' | 'pillar' | 'obstacle' | 'difficult' | 'door' | 'stairs' | 'platform';
+export type Terrain = 'floor' | 'wall' | 'pillar' | 'obstacle' | 'difficult' | 'door' | 'stairs' | 'platform' | 'void';
 
 export interface Cell {
   terrain: Terrain;
@@ -26,11 +26,21 @@ const TERRAIN: Record<Terrain, Omit<Cell, 'terrain' | 'height'>> = {
   pillar: { blocksMove: true, blocksSight: true, difficult: false },
   // waist-high things: crates, barrels. Block movement, give cover, don't block sight entirely.
   obstacle: { blocksMove: true, blocksSight: true, difficult: false },
+  // outside the map: nothing there
+  void: { blocksMove: true, blocksSight: true, difficult: false },
 };
 
+/**
+ * Map glyphs. Doors (`d`) start closed: a closed door blocks movement and sight
+ * until opened (Grid.setOpen). `D` is an open archway. `<` and `>` are stairs to
+ * another floor; `,` is bare earth (the graveyard).
+ */
 export const MAP_LEGEND: Record<string, Terrain> = {
   '#': 'wall', D: 'door', '.': 'floor', P: 'pillar', r: 'difficult', H: 'platform', S: 'stairs', b: 'obstacle', B: 'obstacle',
+  d: 'door', ',': 'floor', '<': 'floor', '>': 'floor', t: 'obstacle', c: 'obstacle', a: 'obstacle', w: 'difficult', ' ': 'void',
 };
+/** Glyphs for doors that open and close. */
+export const CLOSABLE = new Set(['d']);
 
 export class Grid {
   readonly cells: Cell[];
@@ -48,13 +58,24 @@ export class Grid {
         const terrain = legend[ch];
         if (!terrain) throw new Error(`unknown map glyph '${ch}'`);
         const height = terrain === 'platform' ? 1 : terrain === 'stairs' ? 0.5 : 0;
-        cells.push({ terrain, height, ...TERRAIN[terrain] });
+        const cell: Cell = { terrain, height, ...TERRAIN[terrain] };
+        if (CLOSABLE.has(ch)) { cell.blocksMove = true; cell.blocksSight = true; }
+        cells.push(cell);
       }
     }
     return new Grid(w, h, cells);
   }
 
   inBounds(x: number, y: number): boolean { return x >= 0 && y >= 0 && x < this.width && y < this.height; }
+
+  /** Open or close a door. Line of sight changes, so the cover cache is dropped. */
+  setOpen(x: number, y: number, open: boolean) {
+    const c = this.cell(x, y);
+    if (!c || c.terrain !== 'door') return;
+    if (c.blocksMove === !open) return;
+    c.blocksMove = !open; c.blocksSight = !open;
+    coverCache.delete(this);
+  }
   cell(x: number, y: number): Cell | undefined { return this.inBounds(x, y) ? this.cells[y * this.width + x] : undefined; }
 
   /** Extra cost in feet to step from a to an adjacent b, or Infinity if the step is impossible. */

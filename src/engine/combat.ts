@@ -82,6 +82,16 @@ export class NeedsDecision extends Error {
 
 export class RuleError extends Error {}
 
+/** What a creature keeps from one fight to the next. */
+export interface CarriedState {
+  hp: number;
+  maxHp: number;
+  slotsLeft: number[];
+  resourcesLeft: Record<string, number>;
+  inv: Record<string, number>;
+  conditions: Condition[];
+}
+
 export interface AttackPreview {
   attack: AttackProfile;
   mode: Advantage;
@@ -125,13 +135,22 @@ export class Combat {
 
   // ------------------------------------------------------------ setup
 
-  add(def: CreatureDef, pos: Pos): Creature {
+  /**
+   * Add a creature. `carry` restores state that lasts between fights (HP, spent slots and resources,
+   * inventory, lasting conditions such as Aid): the campaign brings its heroes in this way.
+   */
+  add(def: CreatureDef, pos: Pos, carry?: CarriedState): Creature {
     if (this.creatures.some((c) => c.id === def.id)) throw new Error(`duplicate id ${def.id}`);
     const c: Creature = {
       ...def, hp: def.maxHp, pos: { ...pos }, initiative: 0, conditions: [], turnsStarted: 0,
       turn: freshTurn(def.speed), resourcesLeft: { ...(def.resources ?? {}) }, inv: { ...(def.inventory ?? {}) }, deathSaves: { success: 0, fail: 0 },
       slotsLeft: [...(def.spellcasting?.slots ?? [])], concentration: null,
     };
+    if (carry) {
+      c.maxHp = carry.maxHp; c.hp = carry.hp;
+      c.slotsLeft = [...carry.slotsLeft]; c.resourcesLeft = { ...carry.resourcesLeft }; c.inv = { ...carry.inv };
+      c.conditions = carry.conditions.map((k) => ({ ...k }));
+    }
     this.creatures.push(c);
     return c;
   }

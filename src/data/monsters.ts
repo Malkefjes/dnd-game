@@ -101,3 +101,8 @@ export function zombie(id: string, name = 'Zombie'): CreatureDef {
     description: 'Slam. Undead Fortitude: dropping to 0 HP, it may stay up at 1 HP (CON save) unless the damage was Radiant or a critical hit.',
   };
 }
+
+/** Every monster by name, for maps to place. */
+export const MONSTERS: Record<string, (id: string, name?: string) => CreatureDef> = {
+  skeleton, zombie, goblinWarrior, goblinMinion, goblinBoss, hobgoblinWarrior,
+};
