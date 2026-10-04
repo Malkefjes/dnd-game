@@ -132,6 +132,10 @@ export class AssetLibrary {
   clips: THREE.AnimationClip[] = [];
   private goblinTextures = new Map<string, THREE.Texture>();
   private texIds = new Map<THREE.Texture, number>();
+  /** Decoded pixels of each atlas, for recolouring. */
+  private pixels = new Map<THREE.Texture, ImageData>();
+  /** One texture per atlas: every KayKit model file carries its own copy (the dungeon's, 53 times). */
+  private atlases = new Map<string, THREE.Texture>();
 
   async load(onProgress?: (done: number, total: number) => void) {
     const loader = new GLTFLoader();
@@ -145,7 +149,19 @@ export class AssetLibrary {
     let done = 0;
     await Promise.all(jobs.map(async ([url, use]) => {
       const g = await loader.loadAsync(BASE + url);
-      g.scene.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      g.scene.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        for (const m of (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[]) {
+          if (!m.map?.name) continue;
+          const img = m.map.image as { width: number; height: number; close?: () => void };
+          const k = `${m.map.name}:${img.width}x${img.height}`;
+          const shared = this.atlases.get(k);
+          if (!shared) { this.atlases.set(k, m.map); continue; }
+          if (shared !== m.map) { img.close?.(); m.map.dispose(); m.map = shared; }
+        }
+      });
       use(g);
       onProgress?.(++done, jobs.length);
     }));
@@ -198,7 +214,9 @@ export class AssetLibrary {
     }
     if (spec.prop === 'mace') addMace(model, materials);
     model.scale.set(...spec.scale);
-    return new Character(model, this.clips, spec, accessories, materials);
+    const ch = new Character(model, this.clips, spec, accessories, materials);
+    ch.portraitKey = look ? `look:${JSON.stringify(look)}` : `arch:${archetype}`;
+    return ch;
   }
 
   /**
@@ -206,59 +224,58 @@ export class AssetLibrary {
    * the shading survives; the red hair of the atlas takes the hair tint the same way.
    */
   private toneTexture(tex: THREE.Texture, skin: Tint | null, hair: Tint | null): THREE.Texture {
-    if (!this.texIds.has(tex)) this.texIds.set(tex, this.texIds.size);
-    const key = `tone:${this.texIds.get(tex)}:${JSON.stringify(skin)}:${JSON.stringify(hair)}`;
-    const cached = this.goblinTextures.get(key);
-    if (cached) return cached;
-    const img = tex.image as HTMLImageElement | ImageBitmap;
-    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-    const g = c.getContext('2d')!; g.drawImage(img, 0, 0);
-    const data = g.getImageData(0, 0, c.width, c.height);
-    const d = data.data, hsl = { h: 0, s: 0, l: 0 }, col = new THREE.Color();
-    for (let i = 0; i < d.length; i += 4) {
-      col.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, THREE.SRGBColorSpace);
-      col.getHSL(hsl, THREE.SRGBColorSpace);
+    return this.recolor(tex, `tone:${JSON.stringify(skin)}:${JSON.stringify(hair)}`, (h, s, l) => {
       let t: Tint | null = null;
-      if (skin && hsl.h > 0.03 && hsl.h < 0.12 && hsl.s > 0.2 && hsl.l > 0.55 && hsl.l < 0.95) t = skin;
-      else if (hair && hsl.h < 0.045 && hsl.s > 0.3 && hsl.l > 0.22 && hsl.l < 0.6) t = hair;
-      if (!t) continue;
-      col.setHSL((t.hue + (hsl.h - 0.07) * 0.5 + 1) % 1, t.sat, Math.min(0.94, hsl.l * t.light), THREE.SRGBColorSpace);
-      const o = col.getStyle(THREE.SRGBColorSpace).match(/\d+/g)!.map(Number); d[i] = o[0]; d[i + 1] = o[1]; d[i + 2] = o[2];
-    }
-    g.putImageData(data, 0, 0);
-    const out = new THREE.CanvasTexture(c);
-    out.flipY = tex.flipY; out.colorSpace = tex.colorSpace; out.wrapS = tex.wrapS; out.wrapT = tex.wrapT;
-    out.magFilter = tex.magFilter; out.minFilter = tex.minFilter; out.channel = tex.channel;
-    this.goblinTextures.set(key, out);
-    return out;
+      if (skin && h > 0.03 && h < 0.12 && s > 0.2 && l > 0.55 && l < 0.95) t = skin;
+      else if (hair && h < 0.045 && s > 0.3 && l > 0.22 && l < 0.6) t = hair;
+      return t ? [t.hue + (h - 0.07) * 0.5, t.sat, Math.min(0.94, l * t.light)] : null;
+    });
   }
 
   /** Re-tint the skin tones of a KayKit gradient atlas (goblin green, hobgoblin red, zombie grey). */
   private skinTexture(tex: THREE.Texture, skin: NonNullable<ModelSpec['skin']>): THREE.Texture {
     const { hue, sat, light = 1 } = skin;
+    return this.recolor(tex, `skin:${hue}:${sat}:${light}`, (h, s, l) => {
+      // KayKit skin: warm, fairly light, moderately saturated. Keep the shading gradient (lighter peach → lighter green).
+      if (h > 0.03 && h < 0.12 && s > 0.2 && l > 0.55 && l < 0.95) return [hue + (h - 0.07) * 0.5, sat, (0.22 + (l - 0.55) * 0.9) * light + (1 - light) * 0.3];
+      // red hair → a dark, scruffy goblin mop
+      if (h < 0.045 && s > 0.3 && l > 0.22 && l < 0.6) return [0.08, 0.3, l * 0.4];
+      return null;
+    });
+  }
+
+  /**
+   * A recoloured copy of an atlas. `fn` maps a pixel's HSL (in sRGB, 0–1) to a new HSL, or null to leave it.
+   * The atlases are gradient swatches with few distinct colours, so each colour is worked out once.
+   */
+  private recolor(tex: THREE.Texture, what: string, fn: (h: number, s: number, l: number) => [number, number, number] | null): THREE.Texture {
     if (!this.texIds.has(tex)) this.texIds.set(tex, this.texIds.size);
-    const key = `${this.texIds.get(tex)}:${hue}:${sat}:${light}`;
+    const key = `${this.texIds.get(tex)}:${what}`;
     const cached = this.goblinTextures.get(key);
     if (cached) return cached;
-    const img = tex.image as HTMLImageElement | ImageBitmap;
-    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
-    const g = c.getContext('2d')!; g.drawImage(img, 0, 0);
-    const data = g.getImageData(0, 0, c.width, c.height);
-    const d = data.data, hsl = { h: 0, s: 0, l: 0 }, col = new THREE.Color();
-    const write = (i: number) => { const o = col.getStyle(THREE.SRGBColorSpace).match(/\d+/g)!.map(Number); d[i] = o[0]; d[i + 1] = o[1]; d[i + 2] = o[2]; };
+    let src = this.pixels.get(tex);
+    if (!src) {
+      const img = tex.image as HTMLImageElement | ImageBitmap;
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d', { willReadFrequently: true })!; g.drawImage(img, 0, 0);
+      src = g.getImageData(0, 0, c.width, c.height);
+      this.pixels.set(tex, src);
+    }
+    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+    const g = c.getContext('2d')!;
+    const data = new ImageData(new Uint8ClampedArray(src.data), src.width, src.height);
+    const d = data.data;
+    const memo = new Map<number, number>();
     for (let i = 0; i < d.length; i += 4) {
-      col.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, THREE.SRGBColorSpace);
-      col.getHSL(hsl, THREE.SRGBColorSpace);
-      // KayKit skin: warm, fairly light, moderately saturated
-      if (hsl.h > 0.03 && hsl.h < 0.12 && hsl.s > 0.2 && hsl.l > 0.55 && hsl.l < 0.95) {
-        // keep the shading gradient: lighter peach → lighter green
-        col.setHSL(hue + (hsl.h - 0.07) * 0.5, sat, (0.22 + (hsl.l - 0.55) * 0.9) * light + (1 - light) * 0.3, THREE.SRGBColorSpace);
-        write(i);
-      } else if (hsl.h < 0.045 && hsl.s > 0.3 && hsl.l > 0.22 && hsl.l < 0.6) {
-        // red hair → a dark, scruffy goblin mop
-        col.setHSL(0.08, 0.3, hsl.l * 0.4, THREE.SRGBColorSpace);
-        write(i);
+      const rgb = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+      let out = memo.get(rgb);
+      if (out === undefined) {
+        const [h, s, l] = rgbToHsl(d[i], d[i + 1], d[i + 2]);
+        const t = fn(h, s, l);
+        out = t ? hslToRgb(t[0], t[1], t[2]) : -1;
+        memo.set(rgb, out);
       }
+      if (out >= 0) { d[i] = out >> 16; d[i + 1] = (out >> 8) & 255; d[i + 2] = out & 255; }
     }
     g.putImageData(data, 0, 0);
     const t = new THREE.CanvasTexture(c);
@@ -267,6 +284,37 @@ export class AssetLibrary {
     this.goblinTextures.set(key, t);
     return t;
   }
+}
+
+/** sRGB bytes → HSL (0–1), the same formula three.js uses. */
+function rgbToHsl(r8: number, g8: number, b8: number): [number, number, number] {
+  const r = r8 / 255, g = g8 / 255, b = b8 / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (min + max) / 2;
+  if (min === max) return [0, 0, l];
+  const delta = max - min;
+  const s = l <= 0.5 ? delta / (max + min) : delta / (2 - max - min);
+  let h = max === r ? (g - b) / delta + (g < b ? 6 : 0) : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+  h /= 6;
+  return [h, s, l];
+}
+
+/** HSL (hue wraps, the rest clamped) → packed sRGB 0xRRGGBB. */
+function hslToRgb(h: number, s: number, l: number): number {
+  h = ((h % 1) + 1) % 1; s = Math.min(1, Math.max(0, s)); l = Math.min(1, Math.max(0, l));
+  const hue = (p: number, q: number, t: number) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * 6 * (2 / 3 - t);
+    return p;
+  };
+  let r = l, g = l, b = l;
+  if (s !== 0) {
+    const p = l <= 0.5 ? l * (1 + s) : l + s - l * s, q = 2 * l - p;
+    r = hue(q, p, h + 1 / 3); g = hue(q, p, h); b = hue(q, p, h - 1 / 3);
+  }
+  return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
 }
 
 /**
@@ -373,6 +421,8 @@ function addMace(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[])
 export class Character {
   readonly mixer: THREE.AnimationMixer;
   private actions = new Map<string, THREE.AnimationAction>();
+  /** Figures with the same key look the same, so they can share a portrait. */
+  portraitKey = '';
   private current?: THREE.AnimationAction;
   private base: string;
 

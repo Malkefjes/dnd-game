@@ -49,7 +49,11 @@ export class Game {
   static async create(container: HTMLElement, world: World, hooks: GameHooks, onProgress?: (done: number, total: number) => void, renderer?: PixelRenderer) {
     let r = renderer;
     if (r) { r.loadMap(world.map.rows); r.setZoom(4); } else r = await PixelRenderer.create(container, world.map.rows, onProgress);
-    return new Game(r, world, hooks);
+    const game = new Game(r, world, hooks);
+    // compile the shaders behind the loading screen, so the first frame doesn't freeze
+    await r.precompile();
+    r.start();
+    return game;
   }
 
   private constructor(r: PixelRenderer, world: World, private hooks: GameHooks) {
@@ -65,7 +69,6 @@ export class Game {
     this.hud.onPartyClick = (id) => (this.view ? this.view.handlePartyClick(id) : this.select(id));
     this.bindInput();
     r.onUpdate((dt) => this.tick(dt));
-    r.start();
     this.refreshExplore();
   }
 
@@ -410,6 +413,7 @@ export class Game {
     this.clearHover();
     this.r.loadMap(this.world.map.rows);
     this.populate();
+    await this.r.precompile();
     this.saveGame();
     this.refreshExplore();
     this.hud.banner(this.world.map.name);

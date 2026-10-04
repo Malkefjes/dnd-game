@@ -244,6 +244,11 @@ CLICKS=3 node tools/spellshot.mjs "http://127.0.0.1:5173/?seed=5&play=1&speed=3"
   north-south one) is drawn as a low rim, and wall squares with no open neighbour aren't built. Torches and banners
   only go on full-height walls.
 - **Picking instanced floors:** floor tiles are InstancedMeshes; `userData.tiles[instanceId]` gives the square.
+- **Load time:** portraits are drawn by the main renderer into a small render target, in their own scene (never
+  a second WebGL context, never extra lights in the main scene), one per look (`Character.portraitKey`). Textures are
+  shared per atlas name (KayKit files each embed their own copy; the dungeon's came 53 times). Recolouring works
+  once per distinct colour (`recolor()` in `assets.ts`). Shaders compile behind the loading screen
+  (`PixelRenderer.precompile()`, which pauses the render loop); call it after building a floor and its figures.
 - **Lights:** never add or remove lights during play. three.js recompiles every shader when the light count changes,
   which is a hitch on a GPU and a long freeze in SwiftShader. Effects borrow lights from the pool in `effects.ts`, and torches
   share a pool of 8 in `pixel-renderer.ts` given to the torches nearest the camera.
