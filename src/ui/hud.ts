@@ -37,7 +37,7 @@ export interface HotbarState {
 /** Names that don't fit under a hotbar icon, shortened. */
 const SHORT: Record<string, string> = {
   'Protection from Evil and Good': 'Protection from Evil', 'Breath Weapon (cone)': 'Breath (cone)', 'Breath Weapon (line)': 'Breath (line)',
-  'Off-hand Attack': 'Off-hand',
+  'Off-hand Attack': 'Off-hand', 'Quarterstaff (two hands)': 'Staff (2H)', 'Quarterstaff': 'Staff',
 };
 export const shortName = (label: string) => SHORT[label] ?? label.replace(' (two hands)', ' (2H)').replace(' (thrown)', ' (throw)');
 
@@ -59,7 +59,7 @@ export class Hud {
   onEndTurn: () => void = () => {};
   onPartyClick: (id: string) => void = () => {};
 
-  constructor(private portraitFor: (id: string) => string | undefined) {
+  constructor() {
     this.root.className = 'hud';
     this.logEl.innerHTML = '<div class="panel-title">Combat Log</div>';
     this.logEl.appendChild(this.logLines);
@@ -93,10 +93,6 @@ export class Hud {
     });
   }
 
-  portrait(id: string, side: string, cls = '', dead = false): string {
-    const img = this.portraitFor(id);
-    return `<div class="portrait side-${side} ${cls} ${dead ? 'dead' : ''}">${img ? `<img src="${img}" alt="">` : ''}</div>`;
-  }
 
   setInitiativeVisible(on: boolean) { this.initEl.style.display = on ? '' : 'none'; }
 
@@ -104,7 +100,8 @@ export class Hud {
     const active = entries.find((e) => e.active);
     this.initEl.innerHTML = `<div class="round">Round ${round}${active ? `<span class="who side-${active.side}">${esc(active.name)}</span>` : ''}</div>` + entries.map((e) => `
       <div class="init ${e.active ? 'active' : ''} ${e.dead ? 'gone' : ''}" title="${esc(e.name)} — initiative ${e.initiative}">
-        ${this.portrait(e.id, e.side, '', e.dead)}
+        <div class="init-badge side-${e.side} ${e.dead ? 'dead' : ''}">${icon(e.side === 'party' ? 'dodge' : 'skull', 17)}</div>
+        <div class="init-name side-${e.side}">${esc(e.name)}</div>
         <div class="init-hp"><div style="width:${e.hidden ? 100 : Math.round(e.hpFrac * 100)}%"></div></div>
       </div>`).join('');
   }
@@ -112,7 +109,6 @@ export class Hud {
   renderParty(cards: PartyCard[]) {
     this.partyEl.innerHTML = cards.map((c) => `
       <div class="party-card panel interactive ${c.active ? 'active' : ''}" data-id="${c.id}">
-        ${this.portrait(c.id, c.side, 'lg', c.dead)}
         <div class="party-info">
           <div class="pname">${esc(c.name)}</div>
           ${hpBar(c.hp, c.maxHp, true)}
@@ -144,7 +140,6 @@ export class Hud {
     this.hotbarEl.className = `hotbar panel interactive ${s.waiting ? 'waiting' : ''}`;
     this.hotbarEl.innerHTML = `
       <div class="active-info">
-        ${this.portrait(s.id, s.side, 'xl')}
         <div>
           <div class="aname">${esc(s.name)}</div>
           <div class="atitle">${esc(s.title)}</div>

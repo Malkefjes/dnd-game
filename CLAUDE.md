@@ -244,8 +244,11 @@ CLICKS=3 node tools/spellshot.mjs "http://127.0.0.1:5173/?seed=5&play=1&speed=3"
   north-south one) is drawn as a low rim, and wall squares with no open neighbour aren't built. Torches and banners
   only go on full-height walls.
 - **Picking instanced floors:** floor tiles are InstancedMeshes; `userData.tiles[instanceId]` gives the square.
-- **Load time:** portraits are drawn by the main renderer into a small render target, in their own scene (never
-  a second WebGL context, never extra lights in the main scene), one per look (`Character.portraitKey`). Textures are
+- **No portraits** (the owner's call): the turn order bar shows a friend / enemy badge with the name under it, and
+  the party cards and hotbar show names only. Never render figures with a second WebGL context.
+- **Movement:** no reach tiles in fights; hovering shows the path and cost. A click beyond this turn's movement walks
+  as far as it can along the way there (`fullPath()` in `controller.ts`).
+- **Load time:** textures are
   shared per atlas name (KayKit files each embed their own copy; the dungeon's came 53 times). Recolouring works
   once per distinct colour (`recolor()` in `assets.ts`). Shaders compile behind the loading screen
   (`PixelRenderer.precompile()`, which pauses the render loop); call it after building a floor and its figures.

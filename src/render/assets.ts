@@ -214,9 +214,7 @@ export class AssetLibrary {
     }
     if (spec.prop === 'mace') addMace(model, materials);
     model.scale.set(...spec.scale);
-    const ch = new Character(model, this.clips, spec, accessories, materials);
-    ch.portraitKey = look ? `look:${JSON.stringify(look)}` : `arch:${archetype}`;
-    return ch;
+    return new Character(model, this.clips, spec, accessories, materials);
   }
 
   /**
@@ -421,8 +419,6 @@ function addMace(model: THREE.Object3D, materials: THREE.MeshStandardMaterial[])
 export class Character {
   readonly mixer: THREE.AnimationMixer;
   private actions = new Map<string, THREE.AnimationAction>();
-  /** Figures with the same key look the same, so they can share a portrait. */
-  portraitKey = '';
   private current?: THREE.AnimationAction;
   private base: string;
 

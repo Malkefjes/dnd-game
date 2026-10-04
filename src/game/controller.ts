@@ -29,7 +29,8 @@ type Mode =
 
 interface Approach { dest: Pos; path: Pos[]; cost: number; provokers: Creature[] }
 type Plan =
-  | { kind: 'move'; approach: Approach }
+  /** Walk. `partial`: the clicked square is too far, so this walks as far as it can towards `at`. */
+  | { kind: 'move'; approach: Approach; partial?: boolean; at?: Pos }
   | { kind: 'attack'; target: Creature; attack: AttackProfile; offhand: boolean; approach: Approach; preview: AttackPreview }
   | { kind: 'shove'; target: Creature; effect: 'push' | 'prone'; approach: Approach; dc: number }
   | { kind: 'potion'; target: Creature; approach: Approach }
@@ -50,7 +51,6 @@ export interface Stage {
   ov: Overlays;
   fx: Effects;
   vm: Map<string, VM>;
-  portraits: Record<string, string>;
   mouse: { x: number; y: number; dirty: boolean };
 }
 
@@ -386,10 +386,28 @@ export class CombatView {
     }
     if (m.kind !== 'default') return { kind: 'invalid', reason: 'Pick a target', at };
     if (samePos(at, a.pos)) return null;
-    const res = this.combat.reachable(a).get(`${at.x},${at.y}`);
+    const reach = this.combat.reachable(a);
+    const res = reach.get(`${at.x},${at.y}`);
     const cell = this.combat.grid.cell(at.x, at.y);
-    if (!res) return { kind: 'invalid', reason: cell?.blocksMove ? 'Blocked' : a.turn.movement <= 0 ? 'No movement left' : 'Too far', at };
-    return { kind: 'move', approach: { dest: at, path: res.path, cost: res.cost, provokers: this.combat.provokersAlong(a, res.path) } };
+    if (res) return { kind: 'move', approach: { dest: at, path: res.path, cost: res.cost, provokers: this.combat.provokersAlong(a, res.path) } };
+    if (cell?.blocksMove) return { kind: 'invalid', reason: 'Blocked', at };
+    if (a.turn.movement <= 0) return { kind: 'invalid', reason: 'No movement left', at };
+    // too far: walk the way there as far as this turn's movement goes
+    const full = this.fullPath(a, at);
+    if (!full) return { kind: 'invalid', reason: 'No way there', at };
+    let stop: { path: Pos[]; cost: number } | undefined;
+    for (let i = full.length - 1; i > 0 && !stop; i--) stop = reach.get(`${full[i].x},${full[i].y}`);
+    if (!stop) return { kind: 'invalid', reason: 'No movement left', at };
+    const dest = stop.path[stop.path.length - 1];
+    return { kind: 'move', partial: true, at, approach: { dest, path: stop.path, cost: stop.cost, provokers: this.combat.provokersAlong(a, stop.path) } };
+  }
+
+  /** The whole way to a square, ignoring this turn's movement (cached until anyone moves). */
+  private pathCache: { key: string; map: Map<string, { path: Pos[] }> } | null = null;
+  private fullPath(a: Creature, to: Pos): Pos[] | undefined {
+    const key = `${a.id}|${this.combat.creatures.map((c) => `${c.pos.x},${c.pos.y},${this.combat.isAlive(c) ? 1 : 0}`).join(';')}`;
+    if (this.pathCache?.key !== key) this.pathCache = { key, map: this.combat.reachable(a, 9999) };
+    return this.pathCache.map.get(`${to.x},${to.y}`)?.path;
   }
 
   private planSpell(a: Creature, m: Extract<Mode, { kind: 'spell' }>, target: Creature | undefined, at: Pos): Plan {
@@ -539,7 +557,7 @@ export class CombatView {
     this.ov.clearPlanning();
     this.hud.tooltip(null); this.hud.cursorTag(null);
     if (!plan) { this.refreshHotbar(); return; }
-    this.ov.setHover(plan.kind === 'move' ? plan.approach.dest : 'target' in plan ? plan.target.pos : plan.at);
+    this.ov.setHover(plan.kind === 'move' ? plan.at ?? plan.approach.dest : 'target' in plan ? plan.target.pos : plan.at);
     const ap = 'approach' in plan ? plan.approach : undefined;
     if (ap && ap.path.length > 1) this.ov.setPath(ap.path, ap.provokers.length > 0);
     if (plan.kind === 'attack' || plan.kind === 'shove') this.ov.setTarget(plan.target.pos);
@@ -554,7 +572,7 @@ export class CombatView {
     if (plan.kind === 'move') {
       const end = this.r.project(this.r.worldOf(plan.approach.dest.x, plan.approach.dest.y));
       const w = plan.approach.provokers.length;
-      this.hud.cursorTag(`${plan.approach.cost} ft${w ? ` · ⚠ ${w} opportunity attack${w > 1 ? 's' : ''}` : ''}`, end.x, end.y, w > 0);
+      this.hud.cursorTag(`${plan.partial ? `Too far: ${plan.approach.cost} ft towards it` : `${plan.approach.cost} ft`}${w ? ` · ⚠ ${w} opportunity attack${w > 1 ? 's' : ''}` : ''}`, end.x, end.y, w > 0);
     }
     if (plan.kind === 'invalid') this.hud.cursorTag(plan.reason, this.mouse.x, this.mouse.y - 10, true);
     this.refreshHotbar(ap?.cost);
@@ -725,10 +743,8 @@ export class CombatView {
     this.refreshHotbar();
     const a = c.active;
     this.ov.setActive(a && !this.busy ? this.vm.get(a.id)!.pos : a ? this.vm.get(a.id)!.pos : null);
-    if (a && a.controller === 'player' && !this.busy && !c.over) {
-      const tiles = [...c.reachable(a).values()].map((r) => r.path[r.path.length - 1]);
-      this.ov.setReach(tiles, a.pos);
-    } else this.ov.setReach([]);
+    // no movement-range tiles (the owner's call): hovering shows the path, and a click too far walks as far as it can
+    this.ov.setReach([]);
   }
 
   private refreshHotbar(previewMove?: number) {

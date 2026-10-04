@@ -59,9 +59,8 @@ export class Game {
   private constructor(r: PixelRenderer, world: World, private hooks: GameHooks) {
     this.r = r;
     this.world = world;
-    const portraits: Record<string, string> = {};
-    this.hud = new Hud((id) => portraits[id]);
-    this.stage = { r, hud: this.hud, ov: new Overlays(r), fx: new Effects(r), vm: new Map(), portraits, mouse: { x: -1, y: -1, dirty: false } };
+    this.hud = new Hud();
+    this.stage = { r, hud: this.hud, ov: new Overlays(r), fx: new Effects(r), vm: new Map(), mouse: { x: -1, y: -1, dirty: false } };
     this.selected = world.living()[0]?.id ?? '';
     this.populate();
     this.hud.onSlot = (k) => (this.view ? this.view.handleSlot(k) : this.exploreSlot(k));
@@ -108,8 +107,7 @@ export class Game {
       const [x, y] = d.replace('door@', '').split(',').map(Number);
       r.setDoorOpen(x, y, true, true);
     }
-    Object.assign(this.stage.portraits, r.renderPortraits());
-    // (portrait rendering shows every ring again) the dead and the dormant have none
+    // the dead and the dormant have no ring
     for (const [id, v] of vm) {
       const g = this.groupOf(id);
       if (v.dead || (g && this.dormant.has(g.id))) r.figures.get(id)!.ring.visible = false;
@@ -206,7 +204,7 @@ export class Game {
       hud.renderHotbar({
         id: h.id, name: def.name, title: def.description ?? '', hp: h.hp, maxHp: h.maxHp, ac: def.ac, side: 'party',
         actions: 0, bonus: 0, reaction: true, movement: 0, speed: def.speed, slots: [save], waiting: this.walking,
-        explore: { hint: `<b>${esc(this.world.map.name)}.</b> Click to walk; the party follows. <b>Tab</b> or a portrait picks who leads. Click doors, notes and stairs to use them.` },
+        explore: { hint: `<b>${esc(this.world.map.name)}.</b> Click to walk; the party follows. <b>Tab</b> or a party card picks who leads. Click doors, notes and stairs to use them.` },
       });
     }
     ov.setReach([]);
@@ -250,7 +248,7 @@ export class Game {
         const g = this.groupOf(creatureId);
         return { kind: 'info', html: `<div class="tip-head"><span class="tname enemy">${esc(v.name)}</span><span class="tsub">${esc(g?.name ?? '')}</span></div><div class="tip-note">Walk into their room to fight them.</div>` };
       }
-      if (v?.side === 'party') return { kind: 'info', html: `<div class="tname ally">${esc(v.name)}</div><div class="tip-note">Click the portrait (or Tab) to lead with this hero.</div>` };
+      if (v?.side === 'party') return { kind: 'info', html: `<div class="tname ally">${esc(v.name)}</div><div class="tip-note">Click their card on the left (or Tab) to lead with this hero.</div>` };
     }
     if (!tile) return null;
     const door = w.doorAt(tile);

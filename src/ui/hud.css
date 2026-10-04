@@ -27,14 +27,6 @@ canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default
 .panel { background: var(--panel-bg); border: var(--panel-border); border-radius: var(--radius); box-shadow: var(--panel-shadow); }
 .panel-title { font-family: var(--font-head); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
 
-/* portraits */
-.portrait { width: 44px; height: 44px; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: radial-gradient(#3a2f26, #15100c); border: 2px solid var(--ally); flex: none; position: relative; }
-.portrait.side-enemy { border-color: var(--enemy); }
-.portrait img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
-.portrait.lg { width: 56px; height: 56px; } .portrait.xl { width: 70px; height: 70px; }
-.portrait.dead img { filter: grayscale(1) brightness(.45); }
-.portrait.dead::after { content: '✕'; position: absolute; inset: 0; display: grid; place-items: center; color: #d33; font-size: 26px; text-shadow: 0 0 4px #000; }
-
 /* initiative */
 .initiative { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: flex-end; padding: 6px 12px; }
 .round { font-family: var(--font-head); color: var(--accent); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; margin-right: 8px; align-self: center; white-space: nowrap; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 92px; }
@@ -42,14 +34,20 @@ canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default
 .round .who.side-enemy { color: #ff8f86; }
 .init { display: flex; flex-direction: column; align-items: center; gap: 2px; opacity: .8; transition: transform .2s, opacity .2s; }
 .init.active { opacity: 1; transform: translateY(3px); }
-.init.active .portrait { width: 56px; height: 56px; box-shadow: 0 0 0 3px var(--accent), 0 0 18px var(--accent); }
+.init-badge { position: relative; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(#3a2f26, #15100c); border: 2px solid var(--ally); color: #9fd0ff; }
+.init-badge.side-enemy { border-color: var(--enemy); color: #ff8f86; }
+.init-badge.dead::after { content: '✕'; position: absolute; inset: 0; display: grid; place-items: center; color: #d33; font-size: 20px; text-shadow: 0 0 4px #000; }
+.init.active .init-badge { box-shadow: 0 0 0 2px var(--accent), 0 0 14px var(--accent); }
+.init-name { max-width: 68px; font-size: 11.5px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #b8d8ff; }
+.init-name.side-enemy { color: #ffb0a8; }
+.init.active .init-name { color: var(--accent); }
 .init.gone { opacity: .35; }
 .init-hp { width: 40px; height: 4px; background: var(--hp-bg); border-radius: 2px; overflow: hidden; }
 .init-hp div { height: 100%; background: var(--hp); }
 
 /* party frames */
 .party-frames { position: absolute; left: 18px; top: 100px; display: flex; flex-direction: column; gap: 8px; }
-.party-card { display: flex; gap: 10px; align-items: center; padding: 6px 12px 6px 6px; width: 236px; cursor: pointer; }
+.party-card { display: flex; gap: 10px; align-items: center; padding: 7px 12px; width: 220px; cursor: pointer; }
 .party-card.active { outline: 2px solid var(--accent); }
 .party-info { flex: 1; min-width: 0; }
 .pname { font-family: var(--font-head); font-size: 15px; display: flex; align-items: center; gap: 6px; }
@@ -72,7 +70,7 @@ canvas.stage { position: fixed; left: 0; top: 0; display: block; cursor: default
 
 /* hotbar */
 .hotbar { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 16px; align-items: center; padding: 10px 14px; }
-.active-info { display: flex; gap: 12px; align-items: center; width: 240px; }
+.active-info { display: flex; gap: 12px; align-items: center; width: 190px; }
 .aname { font-family: var(--font-head); font-size: 19px; color: var(--accent); }
 .atitle { font-size: 14px; color: var(--muted); margin-bottom: 5px; white-space: nowrap; }
 .astats { display: flex; align-items: center; gap: 8px; }

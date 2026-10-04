@@ -328,65 +328,6 @@ export class PixelRenderer {
   }
 
   /**
-   * Tiny pixel-art portraits rendered from the real figures. They're drawn by this renderer (a second WebGL
-   * context would have to compile every shader and upload every texture again) into a small render target, in a
-   * scene of their own with a key light, so the main scene's light count never changes. Figures that look the
-   * same (every zombie) share one portrait. The target holds linear light; tone mapping and sRGB are applied here.
-   */
-  private portraitCache = new Map<string, string>();
-  renderPortraits(size = 40): Record<string, string> {
-    const rt = new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, depthBuffer: true });
-    const cam = new THREE.PerspectiveCamera(30, 1, 0.05, 20);
-    const stage = new THREE.Scene();
-    stage.background = new THREE.Color(0x2a2018);
-    const key = new THREE.PointLight(0xffd8a8, 5, 4, 1.5);
-    stage.add(key, new THREE.AmbientLight(0x8890b0, 0.6), new THREE.HemisphereLight(0x8c8aa0, 0x2a1a10, 0.7));
-    const half = new Uint16Array(size * size * 4);
-    const canvas = document.createElement('canvas'); canvas.width = size; canvas.height = size;
-    const g = canvas.getContext('2d')!;
-    const img = g.createImageData(size, size);
-    // ACES filmic (Narkowicz fit) and the sRGB curve, as the portrait renderer used to apply
-    const tone = (x: number) => { x *= 1.2; const y = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14); const c = Math.min(1, Math.max(0, y)); return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055; };
-    const out: Record<string, string> = {};
-    const prevTarget = this.renderer.getRenderTarget();
-    for (const [id, v] of this.figures) {
-      const k = v.character.portraitKey;
-      const cached = this.portraitCache.get(k);
-      if (cached) { out[id] = cached; continue; }
-      const parent = v.group.parent;
-      const ringVis = v.ring.visible;
-      stage.add(v.group); v.ring.visible = false;
-      v.character.update(0);
-      v.group.updateMatrixWorld(true);
-      const head = v.group.position.clone().add(new THREE.Vector3(0, v.headHeight * 0.88, 0));
-      const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(v.group.quaternion);
-      const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
-      const dist = 0.55 + v.headHeight * 0.55;
-      cam.position.copy(head).addScaledVector(fwd, dist).addScaledVector(side, dist * 0.35).add(new THREE.Vector3(0, 0.05, 0));
-      cam.lookAt(head);
-      key.position.copy(cam.position).add(new THREE.Vector3(0, 0.6, 0));
-      this.renderer.setRenderTarget(rt);
-      this.renderer.render(stage, cam);
-      this.renderer.readRenderTargetPixels(rt, 0, 0, size, size, half);
-      // rows come bottom-up from GL
-      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-        const s = ((size - 1 - y) * size + x) * 4, d = (y * size + x) * 4;
-        img.data[d] = tone(THREE.DataUtils.fromHalfFloat(half[s])) * 255;
-        img.data[d + 1] = tone(THREE.DataUtils.fromHalfFloat(half[s + 1])) * 255;
-        img.data[d + 2] = tone(THREE.DataUtils.fromHalfFloat(half[s + 2])) * 255;
-        img.data[d + 3] = 255;
-      }
-      g.putImageData(img, 0, 0);
-      out[id] = canvas.toDataURL();
-      this.portraitCache.set(k, out[id]);
-      parent?.add(v.group); v.ring.visible = ringVis;
-    }
-    this.renderer.setRenderTarget(prevTarget);
-    rt.dispose(); key.dispose();
-    return out;
-  }
-
-  /**
    * Compile every shader the scene needs (all three passes) without blocking, while a loading screen is up.
    * The render loop pauses meanwhile, or its next frame would compile them all at once and freeze.
    */
